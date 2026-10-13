@@ -10,21 +10,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4  # V3 se V4 par update kiya
 
       - name: Set up Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4 # V3 se V4 par update kiya
         with:
           node-version: 18
 
-      - name: Install Dependencies & Build Web/App bundle
+      - name: Install Dependencies
         run: |
           cd mobile_app
           npm install
+          
+      - name: Export Web Bundle
+        run: |
+          cd mobile_app
           npx expo export --platform android
           
-      - name: Upload Artifacts (App Files)
-        uses: actions/upload-artifact@v3
+      # V4 syntax: Deprecation error ko fix karne ke liye
+      - name: Upload Artifacts (App Bundle)
+        uses: actions/upload-artifact@v4
         with:
           name: pocket-option-app-bundle
           path: mobile_app/dist/
