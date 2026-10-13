@@ -6,23 +6,25 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-apk:
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v3
 
-      - name: Setup Node.js
+      - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
           node-version: 18
 
-      - name: Install Expo CLI & Dependencies
+      - name: Install Dependencies & Build Web/App bundle
         run: |
           cd mobile_app
-          npm install -g eas-cli
           npm install
-
-      - name: Build Web / Android Assets
-        run: |
-          echo "Build pipeline configured."
+          npx expo export --platform android
+          
+      - name: Upload Artifacts (App Files)
+        uses: actions/upload-artifact@v3
+        with:
+          name: pocket-option-app-bundle
+          path: mobile_app/dist/
