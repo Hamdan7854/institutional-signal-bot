@@ -48,7 +48,7 @@ def run_institutional_scanner():
     print("🚀 Starting Institutional Signal & Backtesting Engine...")
     
     # Startup Confirmation Message on Telegram
-    send_telegram_msg("🟢 <b>SYSTEM ONLINE:</b> Pocket Option Institutional Scanner deployed & active on Render 24/7!")
+    send_telegram_msg("🟢 <b>SYSTEM ONLINE:</b> Pocket Option Institutional Scanner deployed & active on Render 24/7 (5m Timeframe)!")
     
     provider = MarketDataProvider()
 
@@ -64,7 +64,7 @@ def run_institutional_scanner():
                 action = signal.get("action", "HOLD")
                 score = signal.get("score", signal.get("quality_score", 0))
                 entry_price = signal.get("entry_price", "N/A")
-                expiry = signal.get("expiry", "60 Seconds")
+                expiry = signal.get("expiry", "5 Minutes")  # Updated default to 5 Minutes
                 reason = signal.get("reason", "N/A")
 
                 print(f"[{pair}] Action: {action} | Score: {score}")
