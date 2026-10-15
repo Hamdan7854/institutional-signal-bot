@@ -12,7 +12,7 @@ from config import (
 
 class InstitutionalEngine:
     """
-    Complete 5-Layer Institutional Signal & Quality Filter Engine
+    Complete 5-Layer Institutional Signal & Quality Filter Engine (5-Minute Timeframe)
     """
     def __init__(self, df: pd.DataFrame):
         self.df = df.copy()
@@ -103,7 +103,7 @@ class InstitutionalEngine:
             "action": action,
             "score": score,
             "reason": reason,
-            "expiry": "60 Seconds",
+            "expiry": "5 Minutes",  # Updated to 5 Minutes
             "entry_price": round(last['close'], 5)
         }
 
