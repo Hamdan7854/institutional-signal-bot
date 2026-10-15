@@ -30,7 +30,7 @@ PAIRS = [
 ]
 
 # Timing & Execution Rules
-CANDLE_DURATION_SEC = 60
+CANDLE_DURATION_SEC = 300  # Updated to 5 Minutes (5 * 60 = 300 seconds)
 BODY_MIN_RATIO = 0.60  # Minimum 60% solid body for strong breakout
 COUNTDOWN_SECONDS = 5   # Warning alert before candle close
 
