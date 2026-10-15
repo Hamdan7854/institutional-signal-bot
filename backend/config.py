@@ -4,8 +4,30 @@ import os
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
-# Scan Pairs (Major Forex Pairs)
-PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD", "EUR/GBP"]
+# Scan Pairs (Major Forex Pairs + Pocket Option OTC Pairs)
+PAIRS = [
+    # Live Real Forex Pairs
+    "EUR/USD",
+    "GBP/USD",
+    "USD/JPY",
+    "AUD/USD",
+    "USD/CAD",
+    "EUR/GBP",
+    "EUR/JPY",
+    "GBP/JPY",
+    
+    # Pocket Option OTC Pairs
+    "EUR/USD-OTC",
+    "GBP/USD-OTC",
+    "USD/JPY-OTC",
+    "AUD/USD-OTC",
+    "USD/CAD-OTC",
+    "EUR/GBP-OTC",
+    "NZD/USD-OTC",
+    "GBP/JPY-OTC",
+    "EUR/JPY-OTC",
+    "USD/CHF-OTC"
+]
 
 # Timing & Execution Rules
 CANDLE_DURATION_SEC = 60
