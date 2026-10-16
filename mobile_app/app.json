@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "name": "Institutional Signals",
+    "slug": "pocket-option-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.institutional.signals"
+    }
+  }
+}
