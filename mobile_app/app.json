@@ -7,14 +7,6 @@
     "userInterfaceStyle": "dark",
     "android": {
       "package": "com.institutional.signals"
-    },
-    "plugins": [
-      [
-        "expo-splash-screen",
-        {
-          "backgroundColor": "#0f172a"
-        }
-      ]
-    ]
+    }
   }
 }
