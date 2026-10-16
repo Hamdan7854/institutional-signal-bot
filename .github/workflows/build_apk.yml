@@ -25,16 +25,18 @@ jobs:
 
       - name: Install Dependencies
         run: |
+          cd mobile_app
           npm install
 
-      - name: Clean & Prebuild Android
+      - name: Clean & Prebuild Native Android
         run: |
+          cd mobile_app
           rm -rf android ios .expo
           npx expo prebuild --platform android --clean
 
       - name: Build Android APK
         run: |
-          cd android
+          cd mobile_app/android
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon
 
@@ -42,4 +44,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pocket-option-apk
-          path: android/app/build/outputs/apk/release/app-release.apk
+          path: mobile_app/android/app/build/outputs/apk/release/app-release.apk
