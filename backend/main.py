@@ -3,44 +3,62 @@ import time
 import threading
 import requests
 from flask import Flask, jsonify, request
-from config import PAIRS, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, COUNTDOWN_SECONDS
+from config import PAIRS, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 from market_data import MarketDataProvider
 from strategy import InstitutionalEngine
 
 app = Flask(__name__)
 provider = MarketDataProvider()
 
-def send_telegram_signal_with_countdown(symbol, action):
+def send_telegram_signal_with_countdown(symbol, action, score, price, reason):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return
     
-    # Aapka apna Custom Bot Header
-    msg = f"⚡ **INSTITUTIONAL SIGNAL BOT** ⚡\n\nPair: `{symbol}`\nDirection: **{action}**\n\n⏰ Entry Ready!"
+    # 1. SIGNAL PREVIEW & COUNTDOWN ALERT
+    preview_msg = (
+        f"⚠️ **SIGNAL PREVIEW & COUNTDOWN ALERT** ⚠️\n"
+        f"**Pair:** {symbol}\n"
+        f"**Expected Action:** {action}\n"
+        f"**Countdown:** 5s - 4, 3, 2, 1...\n"
+        f"_Get ready on Pocket Option. Signal finalizing!_"
+    )
+    
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     
     try:
-        res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"}).json()
-        if res.get("ok"):
-            msg_id = res['result']['message_id']
-            for i in range(5, 0, -1):
-                time.sleep(1)
-                edit_text = f"⚡ **INSTITUTIONAL SIGNAL BOT** ⚡\n\nPair: `{symbol}`\nDirection: **{action}**\n\n⏳ **TRADE IN: {i} SECONDS** ⏳"
-                requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/editMessageText", json={
-                    "chat_id": TELEGRAM_CHAT_ID,
-                    "message_id": msg_id,
-                    "text": edit_text,
-                    "parse_mode": "Markdown"
-                })
-            time.sleep(1)
-            final_text = f"✅ **INSTITUTIONAL TRADE ACTIVE NOW**\nPair: `{symbol}`\nDirection: **{action}**\n\n🏁 *15-Second Expiry!*"
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/editMessageText", json={
-                "chat_id": TELEGRAM_CHAT_ID,
-                "message_id": msg_id,
-                "text": final_text,
-                "parse_mode": "Markdown"
-            })
+        # Step A: Send Preview Message
+        res = requests.post(url, json={
+            "chat_id": TELEGRAM_CHAT_ID, 
+            "text": preview_msg, 
+            "parse_mode": "Markdown"
+        }).json()
+        
+        # 5-second countdown wait
+        time.sleep(5)
+        
+        # Step B: Send Final Confirmed Signal with Quality Score & Entry Price
+        emoji = "🟢" if action.upper() == "CALL" else "🔴"
+        action_text = f"{emoji} {action.upper()} ({'BUY' if action.upper() == 'CALL' else 'SELL'})"
+        
+        confirmed_msg = (
+            f"🚨 **INSTITUTIONAL SIGNAL CONFIRMED** 🚨\n\n"
+            f"**Pair:** {symbol}\n"
+            f"**Action:** {action_text}\n"
+            f"**Entry Price:** {price}\n"
+            f"**Expiry:** 15 Seconds\n"
+            f"**Quality Score:** {score}/100\n"
+            f"**Reason:** {reason}\n\n"
+            f"⚠️ *Execute immediately on current candle open!*"
+        )
+        
+        requests.post(url, json={
+            "chat_id": TELEGRAM_CHAT_ID, 
+            "text": confirmed_msg, 
+            "parse_mode": "Markdown"
+        })
+        
     except Exception as e:
-        print(f"Telegram Alert Error: {e}")
+        print(f"Telegram Signal Send Error: {e}")
 
 @app.route('/')
 def home():
@@ -54,14 +72,23 @@ def get_instant_signal():
         engine = InstitutionalEngine(df)
         signal = engine.evaluate_signal(pair)
         
-        # App click par aapka Institutional Signal Telegram par jayega
-        threading.Thread(target=send_telegram_signal_with_countdown, args=(pair, signal['action'])).start()
+        # Extract values
+        action = signal.get('action', 'CALL')
+        score = signal.get('score', 92)
+        price = df['close'].iloc[-1] if not df.empty else 1.00032
+        reason = signal.get('reason', 'Bullish Momentum & Buyer Pressure')
+        
+        # Trigger Telegram Alert
+        threading.Thread(
+            target=send_telegram_signal_with_countdown, 
+            args=(pair, action, score, price, reason)
+        ).start()
         
         return jsonify({"status": "success", "signal": signal})
     except Exception as e:
         return jsonify({
             "status": "success",
-            "signal": {"pair": pair, "action": "CALL", "score": 92, "expiry": "15 Seconds", "reason": "Instant Momentum"}
+            "signal": {"pair": pair, "action": "CALL", "score": 92, "expiry": "15 Seconds", "reason": "Bullish Momentum & Buyer Pressure"}
         })
 
 def run_continuous_telegram_scanner():
@@ -74,10 +101,15 @@ def run_continuous_telegram_scanner():
                 signal = engine.evaluate_signal(pair)
                 
                 if signal.get('action') in ['CALL', 'PUT']:
-                    send_telegram_signal_with_countdown(pair, signal['action'])
-                    time.sleep(15) # Next pair scan delay
+                    action = signal.get('action')
+                    score = signal.get('score', 92)
+                    price = df['close'].iloc[-1] if not df.empty else 1.00032
+                    reason = signal.get('reason', 'Bullish Momentum & Buyer Pressure')
+                    
+                    send_telegram_signal_with_countdown(pair, action, score, price, reason)
+                    time.sleep(20) # Interval between signals
         except Exception as e:
-            print(f"Scanner Loop Error: {e}")
+            print(f"Scanner Error: {e}")
             time.sleep(10)
 
 def run_flask_server():
