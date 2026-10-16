@@ -10,10 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4  # V3 se V4 par update kiya
+        uses: actions/checkout@v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4 # V3 se V4 par update kiya
+        uses: actions/setup-node@v4
         with:
           node-version: 18
 
@@ -21,15 +21,14 @@ jobs:
         run: |
           cd mobile_app
           npm install
-          
-      - name: Export Web Bundle
+
+      - name: Build Android APK (EAS Local Build)
         run: |
           cd mobile_app
-          npx expo export --platform android
-          
-      # V4 syntax: Deprecation error ko fix karne ke liye
-      - name: Upload Artifacts (App Bundle)
+          npx eas-cli build --platform android --profile preview --local --output ./pocket-option.apk
+
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: pocket-option-app-bundle
-          path: mobile_app/dist/
+          name: pocket-option-apk
+          path: mobile_app/pocket-option.apk
