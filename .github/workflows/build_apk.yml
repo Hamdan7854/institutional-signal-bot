@@ -23,20 +23,31 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
+      - name: Locate Project Root & Install Dependencies
+        run: |
+          if [ -f "package.json" ]; then
+            echo "PROJECT_DIR=." >> $GITHUB_ENV
+          elif [ -f "mobile_app/package.json" ]; then
+            echo "PROJECT_DIR=mobile_app" >> $GITHUB_ENV
+          else
+            TARGET_DIR=$(dirname $(find . -maxdepth 3 -name "package.json" | head -n 1))
+            echo "PROJECT_DIR=$TARGET_DIR" >> $GITHUB_ENV
+          fi
+
       - name: Install Dependencies
         run: |
-          cd mobile_app
+          cd ${{ env.PROJECT_DIR }}
           npm install
 
-      - name: Generate Clean Android Native Project
+      - name: Clean & Prebuild Native Android
         run: |
-          cd mobile_app
+          cd ${{ env.PROJECT_DIR }}
           rm -rf android ios .expo
           npx expo prebuild --platform android --clean
 
-      - name: Build APK via Gradle
+      - name: Build Android APK via Gradle
         run: |
-          cd mobile_app/android
+          cd ${{ env.PROJECT_DIR }}/android
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon
 
@@ -44,4 +55,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pocket-option-apk
-          path: mobile_app/android/app/build/outputs/apk/release/app-release.apk
+          path: ${{ env.PROJECT_DIR }}/android/app/build/outputs/apk/release/app-release.apk
