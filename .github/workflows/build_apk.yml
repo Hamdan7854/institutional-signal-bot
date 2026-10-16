@@ -28,13 +28,19 @@ jobs:
           cd mobile_app
           npm install
 
-      - name: Clean & Prebuild Native Android
+      - name: Clean & Prebuild Android Native
         run: |
           cd mobile_app
           rm -rf android ios .expo
           npx expo prebuild --platform android --clean
 
-      - name: Build Android APK
+      - name: Create Missing Splash Resources Fix
+        run: |
+          cd mobile_app/android/app/src/main/res/values
+          mkdir -p .
+          echo '<resources><color name="splashscreen_background">#0f172a</color></resources>' > colors.xml
+
+      - name: Build Android APK via Gradle
         run: |
           cd mobile_app/android
           chmod +x gradlew
