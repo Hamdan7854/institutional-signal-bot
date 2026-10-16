@@ -14,7 +14,8 @@ def send_telegram_signal_with_countdown(symbol, action):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return
     
-    msg = f"⚡ **AMIR-FX STYLE 15S SIGNAL** ⚡\n\nPair: `{symbol}`\nDirection: **{action}**\n\n⏰ Entry Ready!"
+    # Aapka apna Custom Bot Header
+    msg = f"⚡ **INSTITUTIONAL SIGNAL BOT** ⚡\n\nPair: `{symbol}`\nDirection: **{action}**\n\n⏰ Entry Ready!"
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     
     try:
@@ -23,7 +24,7 @@ def send_telegram_signal_with_countdown(symbol, action):
             msg_id = res['result']['message_id']
             for i in range(5, 0, -1):
                 time.sleep(1)
-                edit_text = f"⚡ **AMIR-FX STYLE 15S SIGNAL** ⚡\n\nPair: `{symbol}`\nDirection: **{action}**\n\n⏳ **TRADE IN: {i} SECONDS** ⏳"
+                edit_text = f"⚡ **INSTITUTIONAL SIGNAL BOT** ⚡\n\nPair: `{symbol}`\nDirection: **{action}**\n\n⏳ **TRADE IN: {i} SECONDS** ⏳"
                 requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/editMessageText", json={
                     "chat_id": TELEGRAM_CHAT_ID,
                     "message_id": msg_id,
@@ -31,7 +32,7 @@ def send_telegram_signal_with_countdown(symbol, action):
                     "parse_mode": "Markdown"
                 })
             time.sleep(1)
-            final_text = f"✅ **TRADE ACTIVE NOW**\nPair: `{symbol}`\nDirection: **{action}**\n\n🏁 *15-Second Expiry!*"
+            final_text = f"✅ **INSTITUTIONAL TRADE ACTIVE NOW**\nPair: `{symbol}`\nDirection: **{action}**\n\n🏁 *15-Second Expiry!*"
             requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/editMessageText", json={
                 "chat_id": TELEGRAM_CHAT_ID,
                 "message_id": msg_id,
@@ -53,7 +54,7 @@ def get_instant_signal():
         engine = InstitutionalEngine(df)
         signal = engine.evaluate_signal(pair)
         
-        # Trigger Telegram alert concurrently on app click
+        # App click par aapka Institutional Signal Telegram par jayega
         threading.Thread(target=send_telegram_signal_with_countdown, args=(pair, signal['action'])).start()
         
         return jsonify({"status": "success", "signal": signal})
@@ -64,7 +65,7 @@ def get_instant_signal():
         })
 
 def run_continuous_telegram_scanner():
-    """ 24/7 Background Telegram Signal Scanner """
+    """ 24/7 Background Institutional Telegram Signal Scanner """
     while True:
         try:
             for pair in PAIRS:
@@ -74,7 +75,7 @@ def run_continuous_telegram_scanner():
                 
                 if signal.get('action') in ['CALL', 'PUT']:
                     send_telegram_signal_with_countdown(pair, signal['action'])
-                    time.sleep(15) # Wait before scanning next pair
+                    time.sleep(15) # Next pair scan delay
         except Exception as e:
             print(f"Scanner Loop Error: {e}")
             time.sleep(10)
@@ -84,6 +85,5 @@ def run_flask_server():
     app.run(host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
-    # Start continuous Telegram scanner in background thread
     threading.Thread(target=run_continuous_telegram_scanner, daemon=True).start()
     run_flask_server()
