@@ -28,10 +28,12 @@ jobs:
           cd mobile_app
           npm install
 
-      - name: Clean Previous Native Folders & Prebuild
+      - name: Clean Cache & Re-generate Android Native
         run: |
           cd mobile_app
           rm -rf android
+          rm -rf ios
+          rm -rf .expo
           npx expo prebuild --platform android --clean
 
       - name: Build Android APK
