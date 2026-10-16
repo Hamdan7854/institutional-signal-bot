@@ -1,0 +1,45 @@
+package com.roonghafx.bot
+
+import android.os.Bundle
+import android.widget.Button
+import android.widget.TextView
+import androidx.appcompat.app.AppCompatActivity
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+class MainActivity : AppCompatActivity() {
+
+    private val apiClient = ApiClient()
+    private val serverUrl = "https://institutional-signal-bot.onrender.com"
+    private var selectedPair = "EUR/USD-OTC"
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        val tvAction = findViewById<TextView>(R.id.tvAction)
+        val tvDetails = findViewById<TextView>(R.id.tvDetails)
+        val tvCountdown = findViewById<TextView>(R.id.tvCountdown)
+        val tvStatus = findViewById<TextView>(R.id.tvStatus)
+        val btnGenerate = findViewById<Button>(R.id.btnGenerate)
+
+        val signalScreen = SignalScreen(tvAction, tvDetails, tvCountdown, tvStatus)
+
+        btnGenerate.setOnClickListener {
+            signalScreen.showLoading(selectedPair)
+
+            CoroutineScope(Dispatchers.IO).launch {
+                val signal = apiClient.fetchSignal(selectedPair, serverUrl)
+                withContext(Dispatchers.Main) {
+                    if (signal != null) {
+                        signalScreen.renderSignal(signal, selectedPair)
+                    } else {
+                        tvStatus.text = "Failed to fetch signal. Try again."
+                    }
+                }
+            }
+        }
+    }
+}
