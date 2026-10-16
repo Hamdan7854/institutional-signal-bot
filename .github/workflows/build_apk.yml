@@ -28,15 +28,13 @@ jobs:
           cd mobile_app
           npm install
 
-      - name: Clean Cache & Re-generate Android Native
+      - name: Generate Clean Android Native Project
         run: |
           cd mobile_app
-          rm -rf android
-          rm -rf ios
-          rm -rf .expo
+          rm -rf android ios .expo
           npx expo prebuild --platform android --clean
 
-      - name: Build Android APK
+      - name: Build APK via Gradle
         run: |
           cd mobile_app/android
           chmod +x gradlew
