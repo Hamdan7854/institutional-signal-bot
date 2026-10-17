@@ -24,22 +24,47 @@ def get_scannable_pairs():
                 scannable.append(pair)
     return scannable
 
-def send_telegram_signal_with_countdown(symbol, action, score, accuracy, price, reason, chat_id=None):
+def wait_until_10th_second():
+    """ 
+    Har 15-second block ke 10th second (maslan 10s, 25s, 40s, 55s) tak wait karta hai,
+    taake wahan se 5 second ka countdown shuru ho sake.
+    """
+    now = datetime.datetime.now()
+    seconds = now.second
+    microseconds = now.microsecond
+    
+    # Har 15s interval mein target second nikalna (10, 25, 40, 55)
+    current_block_sec = seconds % 15
+    if current_block_sec < 10:
+        target_sec_in_block = 10
+    else:
+        target_sec_in_block = 25 if current_block_sec < 25 else (40 if current_block_sec < 40 else 55)
+        
+    # Agar block cross ho gaya hai to agle block ka 10th second lenge
+    target_total_sec = (seconds // 15) * 15 + target_sec_in_block
+    if target_total_sec <= seconds:
+        target_total_sec += 15
+        
+    wait_seconds = target_total_sec - seconds - (microseconds / 1000000.0)
+    if wait_seconds > 0:
+        time.sleep(wait_seconds)
+
+def send_telegram_signal_10s_countdown(symbol, action, score, accuracy, price, reason, chat_id=None):
     target_chat = chat_id if chat_id else TELEGRAM_CHAT_ID
     if not TELEGRAM_BOT_TOKEN or not target_chat:
         return
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
-    # Step 1: Preview Alert with Countdown & High Winning Score
+    # Step 1: Exactly 10th second par alert bhejna
+    wait_until_10th_second()
+
     preview_msg = (
-        f"⚠️ **SIGNAL PREVIEW & COUNTDOWN ALERT** ⚠️\n"
+        f"⚠️ **SIGNAL PREVIEW (10s Candle)** ⚠️\n"
         f"Pair: **{symbol}**\n"
-        f"Expected Action: **{action}**\n"
-        f"Quality Score: **{score}/100**\n"
-        f"Winning Accuracy: **{accuracy}** 🔥\n"
-        f"Countdown: **5s - 4, 3, 2, 1...**\n"
-        f"_Get ready on Pocket Option. Signal finalizing!_"
+        f"Action: **{action}**\n"
+        f"Score: **{score}/100** ({accuracy}) 🔥\n"
+        f"⏱️ *5s Countdown Starting... Get Ready!*"
     )
 
     try:
@@ -49,23 +74,24 @@ def send_telegram_signal_with_countdown(symbol, action, score, accuracy, price, 
             "parse_mode": "Markdown"
         })
 
-        # 5 Seconds Countdown Wait
-        time.sleep(5)
+        # Step 2: 5 Seconds Countdown (10s se 15s tak)
+        for i in range(5, 0, -1):
+            time.sleep(1)
+            # Aap chahen to har second countdown message update bhi kar sakte hain ya chup chap wait karein
 
-        # Step 2: Final Confirmed Signal with BUY/SELL format
+        # Step 3: Exactly 15th second (Nayi candle open) par Final Signal
         emoji = "🟢" if action.upper() == "BUY" else "🔴"
         action_text = f"{emoji} {action.upper()}"
 
         confirmed_msg = (
-            f"🚨 **INSTITUTIONAL SIGNAL CONFIRMED** 🚨\n\n"
+            f"🚨 **ENTER TRADE NOW (NEW CANDLE OPEN)** 🚨\n\n"
             f"**Pair:** {symbol}\n"
             f"**Action:** {action_text}\n"
             f"**Entry Price:** {price}\n"
             f"**Expiry:** 15 Seconds ⏱️\n"
-            f"**Quality Score:** {score}/100\n"
-            f"**Winning Accuracy:** {accuracy} 🚀\n"
+            f"**Winning Score:** {score}/100 ({accuracy}) 🚀\n"
             f"**Reason:** {reason}\n\n"
-            f"⚡ *Execute trade immediately on 15s candle open!*"
+            f"⚡ *CLICK {action.upper()} RIGHT NOW!*"
         )
 
         requests.post(url, json={
@@ -78,7 +104,7 @@ def send_telegram_signal_with_countdown(symbol, action, score, accuracy, price, 
 
 @app.route('/')
 def home():
-    return "AmirFX Style Instant Command Bot Active!"
+    return "AmirFX 10s-Countdown Signal Engine Active!"
 
 @app.route('/webhook', methods=['POST'])
 def telegram_webhook():
@@ -114,7 +140,7 @@ def handle_user_command(chat_id, target_pair=None):
         engine = InstitutionalEngine(df)
         signal = engine.evaluate_signal(pair_to_use)
 
-        send_telegram_signal_with_countdown(
+        send_telegram_signal_10s_countdown(
             signal.get('pair'),
             signal.get('action'),
             signal.get('score'),
@@ -124,7 +150,7 @@ def handle_user_command(chat_id, target_pair=None):
             chat_id=chat_id
         )
     except Exception as e:
-        send_telegram_signal_with_countdown(
+        send_telegram_signal_10s_countdown(
             pair_to_use,
             "BUY",
             96,
