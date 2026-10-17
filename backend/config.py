@@ -17,4 +17,4 @@ COUNTDOWN_SECONDS = 5
 EMA_FAST = 3
 EMA_SLOW = 8
 RSI_PERIOD = 5
-MIN_QUALITY_SCORE = 60
+MIN_QUALITY_SCORE = 85  # Strict High-Accuracy Filter for AmirFX Style Signals
