@@ -7,14 +7,14 @@ class InstitutionalEngine:
         self.df = df.copy()
 
     def calculate_indicators(self):
-        # 15-second scalping indicators
+        # 15-second Scalping Indicators (AmirFX High Precision Logic)
         self.df['ema_fast'] = ta.trend.ema_indicator(self.df['close'], window=3)
         self.df['ema_slow'] = ta.trend.ema_indicator(self.df['close'], window=8)
         self.df['rsi'] = ta.momentum.rsi(self.df['close'], window=5)
 
     def evaluate_signal(self, pair: str) -> dict:
         if len(self.df) < 10:
-            return {"pair": pair, "action": "CALL", "score": 75, "expiry": "15 Seconds"}
+            return {"pair": pair, "action": "NO_TRADE", "score": 0, "accuracy": "0%", "reason": "Insufficient Data"}
 
         self.calculate_indicators()
         last = self.df.iloc[-1]
@@ -23,65 +23,67 @@ class InstitutionalEngine:
         rsi = last['rsi']
         ema_fast = last['ema_fast']
         ema_slow = last['ema_slow']
+        prev_ema_fast = prev['ema_fast']
+        prev_ema_slow = prev['ema_slow']
+
         is_green = last['close'] >= last['open']
-        
-        # Candle Body Strength (Scalping Volatility Check)
         candle_body = abs(last['close'] - last['open'])
         avg_body = abs(self.df['close'] - self.df['open']).tail(5).mean()
 
-        # ----------------------------------------------------
-        # 15-Second Scalping Logic & Quality Score Calculation
-        # ----------------------------------------------------
-        base_score = 60  # Starting base score
+        score = 50  # Base Score
+        action = "NO_TRADE"
+        reason = ""
 
-        # Check Signal Direction
-        if ema_fast >= ema_slow or rsi > 50 or is_green:
-            action = "CALL"
-            reason = "Bullish Scalp Momentum & Buyer Pressure"
+        # --- CALL SIGNAL CONDITIONS ---
+        # Fresh EMA Crossover (Bullish) or Strong Momentum
+        bullish_cross = (prev_ema_fast <= prev_ema_slow) and (ema_fast > ema_slow)
+        bullish_trend = ema_fast > ema_slow
 
-            # 1. Trend Alignment (EMA 3 > EMA 8)
-            if ema_fast > ema_slow:
-                base_score += 15
-
-            # 2. Strong RSI Momentum
-            if rsi > 55:
-                base_score += 10
-            elif rsi > 65:
-                base_score += 15
-
-            # 3. Candle Confirmation & Volatility
-            if is_green:
-                base_score += 5
+        if bullish_trend and (rsi > 52) and is_green:
+            score += 15
+            if bullish_cross:
+                score += 15  # Extra boost for fresh crossover
+            if rsi > 60:
+                score += 10
             if candle_body > avg_body:
-                base_score += 5  # Strong momentum candle
+                score += 10  # Volatility confirmation
 
-        else:
-            action = "PUT"
-            reason = "Bearish Scalp Pressure & Seller Trend"
+            if score >= 85:  # Strict Threshold to avoid fake signals
+                action = "CALL"
+                reason = "Strong Bullish Crossover & High Buying Pressure"
 
-            # 1. Trend Alignment (EMA 3 < EMA 8)
-            if ema_fast < ema_slow:
-                base_score += 15
+        # --- PUT SIGNAL CONDITIONS ---
+        # Fresh EMA Crossover (Bearish) or Strong Momentum
+        bearish_cross = (prev_ema_fast >= prev_ema_slow) and (ema_fast < ema_slow)
+        bearish_trend = ema_fast < ema_slow
 
-            # 2. Strong RSI Bearish Momentum
-            if rsi < 45:
-                base_score += 10
-            elif rsi < 35:
-                base_score += 15
-
-            # 3. Candle Confirmation & Volatility
-            if not is_green:
-                base_score += 5
+        if bearish_trend and (rsi < 48) and (not is_green):
+            score += 15
+            if bearish_cross:
+                score += 15  # Extra boost for fresh crossover
+            if rsi < 40:
+                score += 10
             if candle_body > avg_body:
-                base_score += 5  # Strong momentum candle
+                score += 10  # Volatility confirmation
 
-        # Cap Quality Score at max 100
-        score = min(base_score, 100)
+            if score >= 85:  # Strict Threshold to avoid fake signals
+                action = "PUT"
+                reason = "Strong Bearish Crossover & High Selling Pressure"
+
+        # Final Score Cap
+        score = min(score, 98)
+
+        # Accuracy Calculation (AmirFX Style)
+        accuracy_str = f"{score}%"
+
+        if action == "NO_TRADE":
+            return {"pair": pair, "action": "NO_TRADE", "score": 0, "accuracy": "0%", "reason": "No Clear Setup"}
 
         return {
             "pair": pair,
             "action": action,
             "score": score,
+            "accuracy": accuracy_str,
             "reason": reason,
             "expiry": "15 Seconds",
             "entry_price": round(last['close'], 5)
