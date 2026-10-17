@@ -7,7 +7,7 @@ class InstitutionalEngine:
         self.df = df.copy()
 
     def calculate_indicators(self):
-        # 15-second Scalping Indicators (AmirFX High Precision Logic)
+        # 15-second scalping indicators
         self.df['ema_fast'] = ta.trend.ema_indicator(self.df['close'], window=3)
         self.df['ema_slow'] = ta.trend.ema_indicator(self.df['close'], window=8)
         self.df['rsi'] = ta.momentum.rsi(self.df['close'], window=5)
@@ -30,50 +30,45 @@ class InstitutionalEngine:
         candle_body = abs(last['close'] - last['open'])
         avg_body = abs(self.df['close'] - self.df['open']).tail(5).mean()
 
-        score = 50  # Base Score
+        score = 65  # Base score for high probability
         action = "NO_TRADE"
         reason = ""
 
-        # --- CALL SIGNAL CONDITIONS ---
-        # Fresh EMA Crossover (Bullish) or Strong Momentum
+        # Bullish conditions
         bullish_cross = (prev_ema_fast <= prev_ema_slow) and (ema_fast > ema_slow)
         bullish_trend = ema_fast > ema_slow
 
-        if bullish_trend and (rsi > 52) and is_green:
+        if bullish_trend and (rsi > 50) and is_green:
             score += 15
             if bullish_cross:
-                score += 15  # Extra boost for fresh crossover
-            if rsi > 60:
                 score += 10
+            if rsi > 60:
+                score += 5
             if candle_body > avg_body:
-                score += 10  # Volatility confirmation
+                score += 5
 
-            if score >= 85:  # Strict Threshold to avoid fake signals
+            if score >= 85:
                 action = "CALL"
-                reason = "Strong Bullish Crossover & High Buying Pressure"
+                reason = "Strong Bullish Momentum & EMA Cross"
 
-        # --- PUT SIGNAL CONDITIONS ---
-        # Fresh EMA Crossover (Bearish) or Strong Momentum
+        # Bearish conditions
         bearish_cross = (prev_ema_fast >= prev_ema_slow) and (ema_fast < ema_slow)
         bearish_trend = ema_fast < ema_slow
 
-        if bearish_trend and (rsi < 48) and (not is_green):
+        if bearish_trend and (rsi < 50) and (not is_green):
             score += 15
             if bearish_cross:
-                score += 15  # Extra boost for fresh crossover
-            if rsi < 40:
                 score += 10
+            if rsi < 40:
+                score += 5
             if candle_body > avg_body:
-                score += 10  # Volatility confirmation
+                score += 5
 
-            if score >= 85:  # Strict Threshold to avoid fake signals
+            if score >= 85:
                 action = "PUT"
-                reason = "Strong Bearish Crossover & High Selling Pressure"
+                reason = "Strong Bearish Momentum & EMA Cross"
 
-        # Final Score Cap
         score = min(score, 98)
-
-        # Accuracy Calculation (AmirFX Style)
         accuracy_str = f"{score}%"
 
         if action == "NO_TRADE":
