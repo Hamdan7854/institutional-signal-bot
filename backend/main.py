@@ -52,9 +52,9 @@ def send_telegram_signal_with_countdown(symbol, action, score, accuracy, price, 
         # 5 Seconds Countdown Wait
         time.sleep(5)
 
-        # Step 2: Final Confirmed Signal
-        emoji = "🟢" if action.upper() == "CALL" else "🔴"
-        action_text = f"{emoji} {action.upper()} ({'BUY' if action.upper() == 'CALL' else 'SELL'})"
+        # Step 2: Final Confirmed Signal with BUY/SELL format
+        emoji = "🟢" if action.upper() == "BUY" else "🔴"
+        action_text = f"{emoji} {action.upper()}"
 
         confirmed_msg = (
             f"🚨 **INSTITUTIONAL SIGNAL CONFIRMED** 🚨\n\n"
@@ -78,7 +78,7 @@ def send_telegram_signal_with_countdown(symbol, action, score, accuracy, price, 
 
 @app.route('/')
 def home():
-    return "AmirFX Style Instant On-Demand Bot Active!"
+    return "AmirFX Style Instant Command Bot Active!"
 
 @app.route('/webhook', methods=['POST'])
 def telegram_webhook():
@@ -99,15 +99,12 @@ def telegram_webhook():
         return jsonify({"status": "error", "message": str(e)})
 
 def handle_user_command(chat_id, target_pair=None):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     active_pairs = get_scannable_pairs()
 
-    # Agar user ne specific pair manga hai (jaise /signal EUR/USD-OTC)
     if target_pair:
         matched = [p for p in PAIRS if target_pair in p.upper()]
         pairs_to_check = matched if matched else [target_pair]
     else:
-        # Agar sirf /signal likha hai, toh pehla active pair utha lo
         pairs_to_check = [active_pairs[0]] if active_pairs else ["EUR/USD-OTC"]
 
     pair_to_use = pairs_to_check[0]
@@ -117,7 +114,6 @@ def handle_user_command(chat_id, target_pair=None):
         engine = InstitutionalEngine(df)
         signal = engine.evaluate_signal(pair_to_use)
 
-        # Foran signal generate karke bhej do with high score (AmirFX style)
         send_telegram_signal_with_countdown(
             signal.get('pair'),
             signal.get('action'),
@@ -128,10 +124,9 @@ def handle_user_command(chat_id, target_pair=None):
             chat_id=chat_id
         )
     except Exception as e:
-        # Fallback agar API mein koi masla ho toh bhi signal lazmi generate ho ga
         send_telegram_signal_with_countdown(
             pair_to_use,
-            "CALL",
+            "BUY",
             96,
             "96%",
             1.0500,
