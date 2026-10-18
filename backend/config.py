@@ -3,23 +3,8 @@ import os
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
-# Real Forex & Pocket Option OTC Pairs Integrated (All Pairs from Screenshots)
+# 100% Real Market Forex Pairs (OTC Pairs Removed)
 PAIRS = [
-    # OTC Pairs
-    "AUD/CAD-OTC", "AUD/CHF-OTC", "AUD/NZD-OTC", "CAD/CHF-OTC", "CAD/JPY-OTC",
-    "CHF/NOK-OTC", "EUR/HUF-OTC", "EUR/NZD-OTC", "EUR/USD-OTC", "JOD/CNY-OTC",
-    "KES/USD-OTC", "NZD/JPY-OTC", "NZD/USD-OTC", "OMR/CNY-OTC", "SAR/CNY-OTC",
-    "UAH/USD-OTC", "USD/ARS-OTC", "USD/CLP-OTC", "USD/COP-OTC", "USD/IDR-OTC",
-    "USD/PKR-OTC", "USD/RUB-OTC", "USD/THB-OTC", "USD/VND-OTC", "USD/JPY-OTC",
-    "EUR/CHF-OTC", "TND/USD-OTC", "USD/BRL-OTC", "USD/INR-OTC", "USD/MYR-OTC",
-    "GBP/AUD-OTC", "BHD/CNY-OTC", "ZAR/USD-OTC", "CHF/JPY-OTC", "NGN/USD-OTC",
-    "USD/SGD-OTC", "QAR/CNY-OTC", "USD/CAD-OTC", "EUR/TRY-OTC", "AUD/USD-OTC",
-    "USD/PHP-OTC", "GBP/USD-OTC", "EUR/JPY-OTC", "LBP/USD-OTC", "USD/CHF-OTC",
-    "USD/DZD-OTC", "EUR/GBP-OTC", "USD/MXN-OTC", "EUR/RUB-OTC", "AUD/JPY-OTC",
-    "YER/USD-OTC", "USD/EGP-OTC", "AED/CNY-OTC", "GBP/JPY-OTC", "USD/BDT-OTC",
-    "USD/CNH-OTC", "MAD/USD-OTC",
-    
-    # Real Market Pairs
     "EUR/JPY", "GBP/JPY", "EUR/CAD", "AUD/CAD", "AUD/CHF", "AUD/USD",
     "CAD/CHF", "CAD/JPY", "CHF/JPY", "EUR/CHF", "EUR/GBP", "EUR/USD",
     "GBP/AUD", "GBP/CAD", "GBP/CHF", "GBP/USD", "USD/CAD", "USD/CHF",
@@ -28,7 +13,7 @@ PAIRS = [
 
 CANDLE_DURATION_SEC = 15
 COUNTDOWN_SECONDS = 5
-EMA_FAST = 3
-EMA_SLOW = 8
-RSI_PERIOD = 5
-MIN_QUALITY_SCORE = 80  # Strict High-Accuracy Filter for AmirFX Style Signals
+EMA_FAST = 9
+EMA_SLOW = 21
+RSI_PERIOD = 14
+MIN_QUALITY_SCORE = 80  # Strict High-Accuracy Filter
