@@ -136,7 +136,7 @@ def handle_user_command(chat_id, target_pair=None):
     active_pairs = get_scannable_pairs()
 
     if target_pair:
-        matched = [p for p in PAIRS if target_pair in p.org() if target_pair in p.upper()]
+        matched = [p for p in PAIRS if target_pair in p.upper()]
         pairs_to_check = matched if matched else [target_pair]
     else:
         pairs_to_check = [active_pairs[0]] if active_pairs else ["EUR/USD-OTC"]
