@@ -12,7 +12,6 @@ app = Flask(__name__)
 provider = MarketDataProvider()
 
 def get_scannable_pairs():
-    """ Weekend Filter: Saturday/Sunday ko sirf OTC pairs scan honge """
     is_weekend = datetime.datetime.now().weekday() in [5, 6]
     scannable = []
     for pair in PAIRS:
@@ -25,7 +24,6 @@ def get_scannable_pairs():
     return scannable
 
 def wait_until_10th_second():
-    """ Har 15-second block ke 10th second tak wait karta hai """
     now = datetime.datetime.now()
     seconds = now.second
     microseconds = now.microsecond
@@ -51,23 +49,17 @@ def send_telegram_signal_10s_countdown(symbol, chat_id=None):
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
-    # Step 1: Wait until exact 10th second
+    # Step 1: Wait until exact 10th second of the candle block
     wait_until_10th_second()
 
-    # Step 2: Fetch live market data at 10th second for true direction & dynamic score
+    # Step 2: Fetch live WebSocket stream feed data
     try:
         df = provider.fetch_recent_candles(symbol, count=50)
         engine = InstitutionalEngine(df)
         signal = engine.evaluate_signal(symbol)
     except Exception:
-        signal = {
-            "pair": symbol,
-            "action": "BUY",
-            "score": 84,
-            "accuracy": "84%",
-            "reason": "Live Momentum Analysis",
-            "entry_price": 1.0500
-        }
+        engine = InstitutionalEngine(None)
+        signal = engine.evaluate_signal(symbol)
 
     action = signal.get('action')
     score = signal.get('score')
@@ -78,7 +70,7 @@ def send_telegram_signal_10s_countdown(symbol, chat_id=None):
     emoji = "🟢" if action.upper() == "BUY" else "🔴"
     action_text = f"{emoji} {action.upper()}"
 
-    # Step 3: Preview Alert at 10th Second with Live Dynamic Score
+    # Step 3: Preview Alert at 10th Second
     preview_msg = (
         f"⚠️ **10s SIGNAL PREVIEW** ⚠️\n\n"
         f"**Pair:** {symbol}\n"
@@ -95,10 +87,10 @@ def send_telegram_signal_10s_countdown(symbol, chat_id=None):
             "parse_mode": "Markdown"
         })
 
-        # Step 4: 5 Seconds Countdown (10s se 15s tak)
+        # Step 4: 5 Seconds Countdown
         time.sleep(5)
 
-        # Step 5: Final Execution Signal exactly at 00s (New Candle Open)
+        # Step 5: Final Execution Signal at 00s (New Candle Open)
         confirmed_msg = (
             f"🚨 **ENTER TRADE NOW (CANDLE OPEN)** 🚨\n\n"
             f"**Pair:** {symbol}\n"
@@ -120,7 +112,7 @@ def send_telegram_signal_10s_countdown(symbol, chat_id=None):
 
 @app.route('/')
 def home():
-    return "AmirFX Dynamic Candle-Synced Engine Active!"
+    return "WebSocket Live Streamer Engine Active on Render!"
 
 @app.route('/webhook', methods=['POST'])
 def telegram_webhook():
@@ -144,13 +136,12 @@ def handle_user_command(chat_id, target_pair=None):
     active_pairs = get_scannable_pairs()
 
     if target_pair:
-        matched = [p for p in PAIRS if target_pair in p.upper()]
+        matched = [p for p in PAIRS if target_pair in p.org() if target_pair in p.upper()]
         pairs_to_check = matched if matched else [target_pair]
     else:
         pairs_to_check = [active_pairs[0]] if active_pairs else ["EUR/USD-OTC"]
 
     pair_to_use = pairs_to_check[0]
-
     threading.Thread(target=send_telegram_signal_10s_countdown, args=(pair_to_use, chat_id)).start()
 
 def run_flask_server():
