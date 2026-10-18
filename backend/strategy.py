@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 
-class TradingStrategy:
+class InstitutionalEngine:
     def __init__(self):
         pass
 
