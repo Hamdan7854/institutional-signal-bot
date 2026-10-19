@@ -289,7 +289,7 @@ class InstitutionalEngine:
             and bearish_candle
             and pullback_down
             and (trend_candles is None or trend_down)
-        ]
+        )
 
         signal = "WAIT"
         score = max(call_score, put_score)
@@ -313,8 +313,8 @@ class InstitutionalEngine:
             "entry_price": close_price,
             "rsi": round(rsi, 2),
             "adx": round(adx, 2),
-            "ema20": round(ema9, 6),  # Mapped for main.py message format
-            "ema50": round(ema21, 6),  # Mapped for main.py message format
+            "ema20": round(ema9, 6),
+            "ema50": round(ema21, 6),
             "ema9": round(ema9, 6),
             "ema21": round(ema21, 6),
             "macd": round(macd, 6),
