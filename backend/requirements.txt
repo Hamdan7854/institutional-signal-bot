@@ -1,5 +1,7 @@
-yfinance
-pandas
-numpy
+
+Flask
 requests
-flask
+numpy
+pandas
+yfinance
+gunicorn
