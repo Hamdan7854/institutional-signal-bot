@@ -24,7 +24,6 @@ def get_scannable_pairs():
     return scannable
 
 def wait_until_1m_countdown():
-    # Wait until the 50th second of the current minute so preview starts, and execution hits at 00th second
     now = datetime.datetime.now()
     seconds = now.second
     microseconds = now.microsecond
@@ -47,7 +46,7 @@ def send_telegram_signal_1m_countdown(symbol, chat_id=None):
     # Step 1: Wait until 50th second of the minute
     wait_until_1m_countdown()
     
-    # Step 2: Fetch data & evaluate 1-minute signal
+    # Step 2: Fetch data & evaluate signal
     try:
         df = provider.get_historical_data(symbol)
         engine = InstitutionalEngine(df)
@@ -56,14 +55,24 @@ def send_telegram_signal_1m_countdown(symbol, chat_id=None):
         engine = InstitutionalEngine()
         signal = engine.evaluate_signal(symbol)
         
-    action = signal.get('action', 'HOLD')
-    score = signal.get('score', 75)
+    action = signal.get('action', 'HOLD').upper()
+    score = signal.get('score', 50)
     raw_price = signal.get('entry_price', 1.0)
-    price = round(raw_price, 5)  # Clean 5-digit real forex format
+    price = round(raw_price, 5)
     reason = signal.get('reason', '1m Technical Confluence')
     
-    emoji = "🟢" if action.upper() == "BUY" else "🔴"
-    action_text = f"{emoji} {action.upper()}"
+    # Dynamic Emoji Mapping
+    if action == "BUY":
+        emoji = "🟢"
+        call_to_action = "⚡ **CLICK BUY RIGHT NOW!**"
+    elif action == "SELL":
+        emoji = "🔴"
+        call_to_action = "⚡ **CLICK SELL RIGHT NOW!**"
+    else:
+        emoji = "🔵"
+        call_to_action = "⏳ **DO NOT TRADE - WAIT FOR NEXT CONFIRMATION!**"
+        
+    action_text = f"{emoji} {action}"
     
     # Step 3: Preview Alert at 50th Second
     preview_msg = (
@@ -84,10 +93,10 @@ def send_telegram_signal_1m_countdown(symbol, chat_id=None):
     except:
         pass
         
-    # Step 4: 10 Seconds Countdown to exact minute close/open
+    # Step 4: 10 Seconds Countdown
     time.sleep(10)
     
-    # Step 5: Final Execution Signal at exact 00th second (1-Minute Expiry)
+    # Step 5: Final Execution Signal at 00s (Candle Open)
     confirmed_msg = (
         f"🚨 **ENTER 1m TRADE NOW (CANDLE OPEN)** 🚨\n\n"
         f"📌 **Pair:** {symbol}\n"
@@ -96,7 +105,7 @@ def send_telegram_signal_1m_countdown(symbol, chat_id=None):
         f"⏱️ **Expiry:** 1 Minute ⏱️\n"
         f"🚀 **Dynamic Score:** {score}/100 ({score}%)\n"
         f"💡 **Reason:** {reason}\n\n"
-        f"⚡ **CLICK {action.upper()} RIGHT NOW!**"
+        f"{call_to_action}"
     )
     
     try:
