@@ -11,7 +11,7 @@ class InstitutionalEngine:
         self.market_provider = MarketDataProvider() if MarketDataProvider else None
 
     def calculate_indicators(self, df: pd.DataFrame):
-        # 1. Keltner Channels (20 EMA baseline, 2 ATR outer bands)
+        # 1. Keltner Channels (20 EMA baseline, 2 ATR outer bands)[cite: 26]
         df['EMA_20'] = df['close'].ewm(span=20, adjust=False).mean()
         
         df['tr1'] = df['high'] - df['low']
@@ -23,16 +23,15 @@ class InstitutionalEngine:
         df['kc_upper'] = df['EMA_20'] + (2 * df['atr'])
         df['kc_lower'] = df['EMA_20'] - (2 * df['atr'])
         
-        # 2. RSI 14 (50 Midline Momentum Threshold)
+        # 2. RSI 14 (50 Midline Momentum Threshold)[cite: 26]
         delta = df['close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rs = gain / loss
         df['RSI'] = 100 - (100 / (1 + rs))
         
-        # 3. Trend Filter (EMA 9 & EMA 21)
-        df['EMA_9'] = df['close'].ewm(span=9, adjust=False).mean()
-        df['EMA_21'] = df['close'].ewm(span=21, adjust=False).mean()
+        # 3. Dual EMA Trend Filter (20 EMA and 50 EMA)[cite: 26]
+        df['EMA_50'] = df['close'].ewm(span=50, adjust=False).mean()
         
         return df
 
@@ -40,10 +39,10 @@ class InstitutionalEngine:
         if df is None or (isinstance(df, pd.DataFrame) and df.empty):
             df = self.data
             
-        if df is None or df.empty or len(df) < 20:
+        if df is None or df.empty or len(df) < 50:
             df = pd.DataFrame({
-                'open': [1.0]*25, 'high': [1.1]*25, 
-                'low': [0.9]*25, 'close': [1.05]*25, 'volume': [100]*25
+                'open': [1.0]*55, 'high': [1.1]*55, 
+                'low': [0.9]*55, 'close': [1.05]*55, 'volume': [100]*55
             })
             
         df = self.calculate_indicators(df)
@@ -55,8 +54,8 @@ class InstitutionalEngine:
         lower = latest['kc_lower']
         rsi = latest['RSI']
         prev_rsi = prev['RSI']
-        ema9 = latest['EMA_9']
-        ema21 = latest['EMA_21']
+        ema20 = latest['EMA_20']
+        ema50 = latest['EMA_50']
 
         action = "HOLD"
         score = 50
@@ -65,25 +64,28 @@ class InstitutionalEngine:
         if pd.isna(rsi):
             rsi = 50
 
-        # Cristian AP Strategy Implementation (80-85% Win Rate Logic)
-        if close <= lower and rsi > 50 and prev_rsi <= 50 and ema9 >= ema21:
+        # Cristian AP BLW Strategy Implementation (80-85% Win Rate Logic)[cite: 27, 29]
+        # CALL / BUY condition: Price touches/penetrates lower Keltner band and RSI crosses above 50 midline[cite: 27]
+        if close <= lower and rsi > 50 and prev_rsi <= 50 and ema20 >= ema50:
             action = "BUY"
-            score = 88
-            reason = "Keltner Lower Band Touch + RSI 50 Bullish Crossover"[cite: 20]
-        elif close >= upper and rsi < 50 and prev_rsi >= 50 and ema9 <= ema21:
+            score = 85
+            reason = "Keltner Lower Band Touch + RSI 50 Bullish Crossover [BLW Strategy]"[cite: 27]
+        
+        # PUT / SELL condition: Price stretches beyond upper Keltner band and RSI breaks below 50 midline[cite: 27]
+        elif close >= upper and rsi < 50 and prev_rsi >= 50 and ema20 <= ema50:
             action = "SELL"
-            score = 88
-            reason = "Keltner Upper Band Touch + RSI 50 Bearish Crossover"[cite: 20]
+            score = 85
+            reason = "Keltner Upper Band Touch + RSI 50 Bearish Crossover [BLW Strategy]"[cite: 27]
         else:
-            # High Probability Trend Continuation Backup
-            if ema9 > ema21 and rsi > 52:
+            # Secondary Micro-Momentum Filter for Active Trend Continuation
+            if ema20 > ema50 and rsi > 52:
                 action = "BUY"
-                score = 76
-                reason = f"1m Trend Momentum Buy (RSI: {int(rsi)})"
-            elif ema9 < ema21 and rsi < 48:
+                score = 75
+                reason = f"1m Bullish Momentum Continuation (RSI: {int(rsi)})"
+            elif ema20 < ema50 and rsi < 48:
                 action = "SELL"
-                score = 76
-                reason = f"1m Trend Momentum Sell (RSI: {int(rsi)})"
+                score = 75
+                reason = f"1m Bearish Momentum Continuation (RSI: {int(rsi)})"
             else:
                 action = "HOLD"
                 score = 50
