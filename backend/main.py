@@ -16,10 +16,10 @@ def get_scannable_pairs():
     scannable = []
     for pair in PAIRS:
         if is_weekend:
-            if "-OTC" in pair or "_otc" in pair.lower():
+            if "_OTC" in pair or "_otc" in pair.lower():
                 scannable.append(pair)
         else:
-            if "-OTC" not in pair and "_otc" not in pair.lower():
+            if "_OTC" not in pair and "_otc" not in pair.lower():
                 scannable.append(pair)
     return scannable
 
@@ -46,62 +46,65 @@ def send_telegram_signal_10s_countdown(symbol, chat_id=None):
     target_chat = chat_id if chat_id else TELEGRAM_CHAT_ID
     if not TELEGRAM_BOT_TOKEN or not target_chat:
         return
-
+        
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-
-    # Step 1: Wait until exact 10th second of the candle block
+    
+    # Step 1: Wait until next 10th second of the candle block
     wait_until_10th_second()
-
-    # Step 2: Fetch live WebSocket stream feed data
+    
+    # Step 2: Fetch live feed data & evaluate signal
     try:
-        df = provider.fetch_recent_candles(symbol, count=50)
+        df = provider.get_historical_data(symbol)
         engine = InstitutionalEngine(df)
+        signal = engine.evaluate_signal(symbol if df is None or df.empty else df)
+    except Exception as e:
+        engine = InstitutionalEngine()
         signal = engine.evaluate_signal(symbol)
-    except Exception:
-        engine = InstitutionalEngine(None)
-        signal = engine.evaluate_signal(symbol)
-
-    action = signal.get('action')
-    score = signal.get('score')
-    accuracy = signal.get('accuracy')
-    price = signal.get('entry_price')
-    reason = signal.get('reason')
-
+        
+    action = signal.get('action', 'HOLD')
+    score = signal.get('score', 75)
+    raw_price = signal.get('entry_price', 1.0)
+    price = round(raw_price, 5)  # Formatted to 5 real market digits
+    reason = signal.get('reason', 'Technical Confluence')
+    
     emoji = "🟢" if action.upper() == "BUY" else "🔴"
     action_text = f"{emoji} {action.upper()}"
-
+    
     # Step 3: Preview Alert at 10th Second
     preview_msg = (
         f"⚠️ **10s SIGNAL PREVIEW** ⚠️\n\n"
-        f"**Pair:** {symbol}\n"
-        f"**Direction:** {action_text}\n"
-        f"**Dynamic Score:** {score}/100 ({accuracy}) 🔥\n"
-        f"**Reason:** {reason}\n\n"
-        f"⏱️ *5s Countdown Starting... Get Ready!*"
+        f"📌 **Pair:** {symbol}\n"
+        f"🎯 **Direction:** {action_text}\n"
+        f"🔥 **Dynamic Score:** {score}/100 ({score}%)\n"
+        f"💡 **Reason:** {reason}\n\n"
+        f"⏱️ **5s Countdown Starting... Get Ready!**"
     )
-
+    
     try:
         requests.post(url, json={
             "chat_id": target_chat,
             "text": preview_msg,
             "parse_mode": "Markdown"
         })
-
-        # Step 4: 5 Seconds Countdown
-        time.sleep(5)
-
-        # Step 5: Final Execution Signal at 00s (New Candle Open)
-        confirmed_msg = (
-            f"🚨 **ENTER TRADE NOW (CANDLE OPEN)** 🚨\n\n"
-            f"**Pair:** {symbol}\n"
-            f"**Action:** {action_text}\n"
-            f"**Entry Price:** {price}\n"
-            f"**Expiry:** 15 Seconds ⏱️\n"
-            f"**Dynamic Score:** {score}/100 ({accuracy}) 🚀\n"
-            f"**Reason:** {reason}\n\n"
-            f"⚡ *CLICK {action.upper()} RIGHT NOW!*"
-        )
-
+    except:
+        pass
+        
+    # Step 4: 5 Seconds Countdown
+    time.sleep(5)
+    
+    # Step 5: Final Execution Signal at 00s (New Candle Open)
+    confirmed_msg = (
+        f"🚨 **ENTER TRADE NOW (CANDLE OPEN)** 🚨\n\n"
+        f"📌 **Pair:** {symbol}\n"
+        f"🎯 **Action:** {action_text}\n"
+        f"💵 **Entry Price:** {price}\n"
+        f"⏱️ **Expiry:** 15 Seconds ⏱️\n"
+        f"🚀 **Dynamic Score:** {score}/100 ({score}%)\n"
+        f"💡 **Reason:** {reason}\n\n"
+        f"⚡ **CLICK {action.upper()} RIGHT NOW!**"
+    )
+    
+    try:
         requests.post(url, json={
             "chat_id": target_chat,
             "text": confirmed_msg,
@@ -118,35 +121,35 @@ def home():
 def telegram_webhook():
     try:
         data = request.get_json()
-        if "message" in data:
-            message = data["message"]
-            text = message.get("text", "").strip()
-            chat_id = message.get("chat", {}).get("id")
-
-            if text.startswith("/signal") or text.startswith("/getsignal"):
+        if 'message' in data:
+            message = data['message']
+            text = message.get('text', '').strip()
+            chat_id = message.get('chat', {}).get('id')
+            
+            if text.startswith('/signal') or text.startswith('/getsignal'):
                 parts = text.split()
-                target_pair = parts[1].upper() if len(parts) > 1 else None
-                threading.Thread(target=handle_user_command, args=(chat_id, target_pair)).start()
-
+                target_pair = parts[1].upper() if len(parts) > 1 else "EUR/USD"
+                threading.Thread(target=send_telegram_signal_10s_countdown, args=(target_pair, chat_id)).start()
+                
         return jsonify({"status": "ok"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
 
 def handle_user_command(chat_id, target_pair=None):
     active_pairs = get_scannable_pairs()
-
     if target_pair:
         matched = [p for p in PAIRS if target_pair in p.upper()]
         pairs_to_check = matched if matched else [target_pair]
     else:
-        pairs_to_check = [active_pairs[0]] if active_pairs else ["EUR/USD-OTC"]
-
+        pairs_to_check = [active_pairs[0] if active_pairs else "EUR/USD"]
+        
     pair_to_use = pairs_to_check[0]
     threading.Thread(target=send_telegram_signal_10s_countdown, args=(pair_to_use, chat_id)).start()
 
-def run_flask_server():
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+@app.route('/health')
+def health_check():
+    return jsonify({"status": "healthy", "timestamp": time.time()})
 
-if __name__ == "__main__":
-    run_flask_server()
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port)
