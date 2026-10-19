@@ -2,8 +2,8 @@ import pandas as pd
 import numpy as np
 
 class InstitutionalEngine:
-    def __init__(self):
-        pass
+    def __init__(self, data=None):
+        self.data = data
 
     def calculate_indicators(self, df: pd.DataFrame):
         # Moving Averages
@@ -19,7 +19,10 @@ class InstitutionalEngine:
         
         return df
 
-    def analyze_market(self, df: pd.DataFrame):
+    def analyze_market(self, df: pd.DataFrame = None):
+        if df is None:
+            df = self.data
+            
         df = self.calculate_indicators(df)
         latest = df.iloc[-1]
         
