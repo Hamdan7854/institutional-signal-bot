@@ -23,36 +23,31 @@ def get_scannable_pairs():
                 scannable.append(pair)
     return scannable
 
-def wait_until_10th_second():
+def wait_until_1m_countdown():
+    # Wait until the 50th second of the current minute so preview starts, and execution hits at 00th second
     now = datetime.datetime.now()
     seconds = now.second
     microseconds = now.microsecond
     
-    current_block_sec = seconds % 15
-    if current_block_sec < 10:
-        target_sec_in_block = 10
+    if seconds >= 50:
+        target_wait = (60 - seconds) + 50 - (microseconds / 1000000.0)
     else:
-        target_sec_in_block = 25 if current_block_sec < 25 else (40 if current_block_sec < 40 else 55)
+        target_wait = 50 - seconds - (microseconds / 1000000.0)
         
-    target_total_sec = (seconds // 15) * 15 + target_sec_in_block
-    if target_total_sec <= seconds:
-        target_total_sec += 15
-        
-    wait_seconds = target_total_sec - seconds - (microseconds / 1000000.0)
-    if wait_seconds > 0:
-        time.sleep(wait_seconds)
+    if target_wait > 0:
+        time.sleep(target_wait)
 
-def send_telegram_signal_10s_countdown(symbol, chat_id=None):
+def send_telegram_signal_1m_countdown(symbol, chat_id=None):
     target_chat = chat_id if chat_id else TELEGRAM_CHAT_ID
     if not TELEGRAM_BOT_TOKEN or not target_chat:
         return
         
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     
-    # Step 1: Wait until next 10th second of the candle block
-    wait_until_10th_second()
+    # Step 1: Wait until 50th second of the minute
+    wait_until_1m_countdown()
     
-    # Step 2: Fetch live feed data & evaluate signal
+    # Step 2: Fetch data & evaluate 1-minute signal
     try:
         df = provider.get_historical_data(symbol)
         engine = InstitutionalEngine(df)
@@ -64,20 +59,20 @@ def send_telegram_signal_10s_countdown(symbol, chat_id=None):
     action = signal.get('action', 'HOLD')
     score = signal.get('score', 75)
     raw_price = signal.get('entry_price', 1.0)
-    price = round(raw_price, 5)  # Formatted to 5 real market digits
-    reason = signal.get('reason', 'Technical Confluence')
+    price = round(raw_price, 5)  # Clean 5-digit real forex format
+    reason = signal.get('reason', '1m Technical Confluence')
     
     emoji = "🟢" if action.upper() == "BUY" else "🔴"
     action_text = f"{emoji} {action.upper()}"
     
-    # Step 3: Preview Alert at 10th Second
+    # Step 3: Preview Alert at 50th Second
     preview_msg = (
-        f"⚠️ **10s SIGNAL PREVIEW** ⚠️\n\n"
+        f"⚠️ **1m SIGNAL PREVIEW** ⚠️\n\n"
         f"📌 **Pair:** {symbol}\n"
         f"🎯 **Direction:** {action_text}\n"
         f"🔥 **Dynamic Score:** {score}/100 ({score}%)\n"
         f"💡 **Reason:** {reason}\n\n"
-        f"⏱️ **5s Countdown Starting... Get Ready!**"
+        f"⏱️ **10s Countdown to 1-Minute Candle Open... Get Ready!**"
     )
     
     try:
@@ -89,16 +84,16 @@ def send_telegram_signal_10s_countdown(symbol, chat_id=None):
     except:
         pass
         
-    # Step 4: 5 Seconds Countdown
-    time.sleep(5)
+    # Step 4: 10 Seconds Countdown to exact minute close/open
+    time.sleep(10)
     
-    # Step 5: Final Execution Signal at 00s (New Candle Open)
+    # Step 5: Final Execution Signal at exact 00th second (1-Minute Expiry)
     confirmed_msg = (
-        f"🚨 **ENTER TRADE NOW (CANDLE OPEN)** 🚨\n\n"
+        f"🚨 **ENTER 1m TRADE NOW (CANDLE OPEN)** 🚨\n\n"
         f"📌 **Pair:** {symbol}\n"
         f"🎯 **Action:** {action_text}\n"
         f"💵 **Entry Price:** {price}\n"
-        f"⏱️ **Expiry:** 15 Seconds ⏱️\n"
+        f"⏱️ **Expiry:** 1 Minute ⏱️\n"
         f"🚀 **Dynamic Score:** {score}/100 ({score}%)\n"
         f"💡 **Reason:** {reason}\n\n"
         f"⚡ **CLICK {action.upper()} RIGHT NOW!**"
@@ -115,7 +110,7 @@ def send_telegram_signal_10s_countdown(symbol, chat_id=None):
 
 @app.route('/')
 def home():
-    return "WebSocket Live Streamer Engine Active on Render!"
+    return "1-Minute Real Forex Signal Engine Active on Render!"
 
 @app.route('/webhook', methods=['POST'])
 def telegram_webhook():
@@ -129,22 +124,11 @@ def telegram_webhook():
             if text.startswith('/signal') or text.startswith('/getsignal'):
                 parts = text.split()
                 target_pair = parts[1].upper() if len(parts) > 1 else "EUR/USD"
-                threading.Thread(target=send_telegram_signal_10s_countdown, args=(target_pair, chat_id)).start()
+                threading.Thread(target=send_telegram_signal_1m_countdown, args=(target_pair, chat_id)).start()
                 
         return jsonify({"status": "ok"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
-
-def handle_user_command(chat_id, target_pair=None):
-    active_pairs = get_scannable_pairs()
-    if target_pair:
-        matched = [p for p in PAIRS if target_pair in p.upper()]
-        pairs_to_check = matched if matched else [target_pair]
-    else:
-        pairs_to_check = [active_pairs[0] if active_pairs else "EUR/USD"]
-        
-    pair_to_use = pairs_to_check[0]
-    threading.Thread(target=send_telegram_signal_10s_countdown, args=(pair_to_use, chat_id)).start()
 
 @app.route('/health')
 def health_check():
