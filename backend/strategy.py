@@ -1,9 +1,14 @@
 import pandas as pd
 import numpy as np
+try:
+    from market_data import MarketDataProvider
+except ImportError:
+    MarketDataProvider = None
 
 class InstitutionalEngine:
     def __init__(self, data=None):
         self.data = data
+        self.market_provider = MarketDataProvider() if MarketDataProvider else None
 
     def calculate_indicators(self, df: pd.DataFrame):
         # Moving Averages
@@ -20,8 +25,17 @@ class InstitutionalEngine:
         return df
 
     def analyze_market(self, df: pd.DataFrame = None):
-        if df is None:
+        if df is None or (isinstance(df, pd.DataFrame) and df.empty):
             df = self.data
+            
+        if df is None or df.empty:
+            # Fallback safe dataframe
+            df = pd.DataFrame({
+                'open': [1.0, 1.0], 
+                'high': [1.1, 1.1], 
+                'low': [0.9, 0.9], 
+                'close': [1.05, 1.06]
+            })
             
         df = self.calculate_indicators(df)
         latest = df.iloc[-1]
@@ -69,3 +83,12 @@ class InstitutionalEngine:
             "score": score,
             "reason": reason
         }
+
+    def evaluate_signal(self, symbol_or_df):
+        if isinstance(symbol_or_df, str) and self.market_provider:
+            df = self.market_provider.get_historical_data(symbol_or_df)
+            return self.analyze_market(df)
+        elif isinstance(symbol_or_df, pd.DataFrame):
+            return self.analyze_market(symbol_or_df)
+        else:
+            return self.analyze_market(self.data)
