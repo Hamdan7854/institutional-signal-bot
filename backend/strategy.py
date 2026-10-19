@@ -1,4 +1,3 @@
-
 import numpy as np
 import pandas as pd
 
@@ -170,8 +169,7 @@ class InstitutionalEngine:
         except (TypeError, ValueError):
             return None
 
-    def _wait_result(self, reason, close=None, rsi=None,
-                     ema20=None, ema50=None):
+    def _wait_result(self, reason, close=None, rsi=None, ema20=None, ema50=None):
         return {
             "action": "WAIT",
             "signal": "WAIT",
@@ -193,23 +191,17 @@ class InstitutionalEngine:
         prepared = self._prepare_data(df)
 
         if prepared.empty:
-            return self._wait_result(
-                "No valid market candle data."
-            )
+            return self._wait_result("No valid market candle data.")
 
         if len(prepared) < self.min_candles:
             return self._wait_result(
-                f"Not enough candles: {len(prepared)}; "
-                f"minimum required: {self.min_candles}.",
-                close=prepared["close"].iloc[-1]
+                f"Not enough candles: {len(prepared)}; minimum required: {self.min_candles}."
             )
 
         data = self.calculate_indicators(prepared)
 
         if data.empty:
-            return self._wait_result(
-                "Indicators could not be calculated."
-            )
+            return self._wait_result("Indicators could not be calculated.")
 
         last = data.iloc[-1]
         previous = data.iloc[-2]
@@ -224,59 +216,56 @@ class InstitutionalEngine:
 
         if any(
             value is None
-            for value in (
-                close, rsi, previous_rsi, ema20, ema50,
-                upper, lower
-            )
+            for value in (close, rsi, previous_rsi, ema20, ema50, upper, lower)
         ):
-            return self._wait_result(
-                "Indicator values are not ready.",
-                close, rsi, ema20, ema50
-            )
+            return self._wait_result("Indicator values are not ready.", close, rsi, ema20, ema50)
 
-        # Original strategy conditions:
-        # CALL: lower Keltner band touched in latest/previous
-        # candle, RSI crosses upward through 50, EMA20 > EMA50.
+        # Weighted Scoring Engine
+        call_score = 0
+        put_score = 0
+
+        # 1. Trend Evaluation (EMA)
+        if ema20 > ema50:
+            call_score += 35
+        elif ema20 < ema50:
+            put_score += 35
+
+        # 2. RSI Momentum Check
+        if rsi >= 52:
+            call_score += 30
+            if rsi > previous_rsi:
+                call_score += 10
+        elif rsi <= 48:
+            put_score += 30
+            if rsi < previous_rsi:
+                put_score += 10
+
+        # 3. Keltner Channel Breakout / Rebound
         lower_touched = (
-            last["low"] <= last["KC_LOWER"]
-            or previous["low"] <= previous["KC_LOWER"]
+            last["low"] <= lower or previous["low"] <= previous["KC_LOWER"]
         )
-
-        rsi_cross_up = previous_rsi < 50 <= rsi
-        bullish_trend = ema20 > ema50
-
-        # PUT: upper Keltner band touched in latest/previous
-        # candle, RSI crosses downward through 50, EMA20 < EMA50.
         upper_touched = (
-            last["high"] >= last["KC_UPPER"]
-            or previous["high"] >= previous["KC_UPPER"]
+            last["high"] >= upper or previous["high"] >= previous["KC_UPPER"]
         )
 
-        rsi_cross_down = previous_rsi > 50 >= rsi
-        bearish_trend = ema20 < ema50
+        if lower_touched or close < lower:
+            call_score += 25
+        if upper_touched or close > upper:
+            put_score += 25
 
-        if lower_touched and rsi_cross_up and bullish_trend:
+        # Signal Trigger Logic
+        signal = "WAIT"
+        score = 0
+        reason = "Market is consolidated with no momentum."
+
+        if call_score >= 65 and call_score > put_score:
             signal = "CALL"
-            reason = (
-                "Lower Keltner touch + RSI crossed above 50 "
-                "+ EMA20 above EMA50."
-            )
-            score = 85
-
-        elif upper_touched and rsi_cross_down and bearish_trend:
+            score = call_score
+            reason = f"Strong Bullish Alignment (Score: {score}%)"
+        elif put_score >= 65 and put_score > call_score:
             signal = "PUT"
-            reason = (
-                "Upper Keltner touch + RSI crossed below 50 "
-                "+ EMA20 below EMA50."
-            )
-            score = 85
-
-        else:
-            signal = "WAIT"
-            score = 0
-            reason = (
-                "The complete strategy conditions are not aligned."
-            )
+            score = put_score
+            reason = f"Strong Bearish Alignment (Score: {score}%)"
 
         return {
             "action": signal,
@@ -295,16 +284,12 @@ class InstitutionalEngine:
     def generate_signal(self, df=None, symbol=None):
         return self.analyze_market(df=df)
 
-    def evaluate_signal(self, symbol_or_df=None):
+    def evaluate_signal(self, self_or_df=None, symbol_or_df=None):
         if isinstance(symbol_or_df, pd.DataFrame):
             return self.analyze_market(df=symbol_or_df)
-
         if self.data is not None:
             return self.analyze_market(df=self.data)
-
-        return self._wait_result(
-            "Pass a DataFrame containing OHLC candle data."
-        )
+        return self._wait_result("Pass a DataFrame containing OHLC candle data.")
 
 
 Strategy = InstitutionalEngine
