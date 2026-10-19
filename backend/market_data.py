@@ -1,65 +1,121 @@
-import yfinance as yf
-import requests
+
+import logging
+
 import pandas as pd
+import yfinance as yf
+
+from config import (
+    MARKET_INTERVAL,
+    MARKET_PERIOD,
+    MIN_CANDLES,
+)
+
+logger = logging.getLogger(__name__)
+
 
 class MarketDataProvider:
+    """Fetch historical OHLC candles from Yahoo Finance."""
+
     def __init__(self):
-        # Secondary API fallback / validation config (e.g., Free public endpoints or Forex feeds)
-        self.secondary_enabled = True
+        self.secondary_enabled = False
+
+    @staticmethod
+    def normalize_symbol(symbol: str) -> str:
+        """Convert EUR/USD into EURUSD=X for Yahoo Finance."""
+        clean = str(symbol).strip().upper().replace("/", "")
+
+        if clean.endswith("=X"):
+            return clean
+
+        if len(clean) == 6 and clean.isalpha():
+            return clean + "=X"
+
+        raise ValueError(
+            f"Unsupported forex symbol: {symbol}"
+        )
 
     def get_historical_data(self, symbol: str) -> pd.DataFrame:
-        # Standardize symbol for yfinance (e.g., EUR/USD -> EURUSD=X)
-        yf_symbol = symbol.replace("/", "").upper()
-        if not yf_symbol.endswith("=X") and len(yf_symbol) == 6:
-            yf_symbol = yf_symbol + "=X"
+        columns = ["open", "high", "low", "close", "volume"]
 
         try:
-            # 1. Primary Fetch via yfinance (1-minute interval for fast 15s/1m tracking)
+            yf_symbol = self.normalize_symbol(symbol)
+
             ticker = yf.Ticker(yf_symbol)
-            df = ticker.history(period="1d", interval="1m")
-            
+            df = ticker.history(
+                period=MARKET_PERIOD,
+                interval=MARKET_INTERVAL,
+                auto_adjust=False,
+            )
+
             if df is None or df.empty:
-                # Fallback to 5m if 1m is empty
-                df = ticker.history(period="5d", interval="5m")
+                logger.warning(
+                    "No market candles received for %s",
+                    yf_symbol,
+                )
+                return pd.DataFrame(columns=columns)
 
-            if df is not None and not df.empty:
-                # Clean columns to lowercase
-                df = df.rename(columns={
-                    'Open': 'open',
-                    'High': 'high',
-                    'Low': 'low',
-                    'Close': 'close',
-                    'Volume': 'volume'
-                })
-                
-                primary_price = float(df['close'].iloc[-1])
-                
-                # 2. Multi-Source Validation (Cross-check with secondary public feed to prevent fake/manipulated data)
-                if self.secondary_enabled:
-                    self._cross_check_price(symbol, primary_price)
-                
-                return df[['open', 'high', 'low', 'close', 'volume']]
-        except Exception as e:
-            print(f"Primary Data Fetch Error for {symbol}: {e}")
+            df = df.rename(
+                columns={
+                    "Open": "open",
+                    "High": "high",
+                    "Low": "low",
+                    "Close": "close",
+                    "Volume": "volume",
+                }
+            )
 
-        # Fallback empty structure if fetch fails
-        return pd.DataFrame(columns=['open', 'high', 'low', 'close', 'volume'])
+            df.columns = [
+                str(column).strip().lower()
+                for column in df.columns
+            ]
 
-    def _cross_check_price(self, symbol: str, primary_price: float):
-        try:
-            clean_sym = symbol.replace("/", "")
-            url = f"https://api.exchangerate-api.com/v4/latest/{clean_sym[:3]}"
-            response = requests.get(url, timeout=3)
-            if response.status_code == 200:
-                data = response.json()
-                rates = data.get("rates", {})
-                target_currency = clean_sym[3:]
-                if target_currency in rates:
-                    secondary_price = float(rates[target_currency])
-                    # Discrepancy check (Must be within 0.05% tolerance)
-                    diff_percentage = abs(primary_price - secondary_price) / primary_price * 100
-                    if diff_percentage > 0.5:
-                        print(f"WARNING: Price discrepancy detected for {symbol}! Primary: {primary_price}, Secondary: {secondary_price}")
-        except Exception as e:
-            # Non-blocking cross check error
-            pass
+            required = ["open", "high", "low", "close"]
+
+            if not all(column in df.columns for column in required):
+                logger.error(
+                    "Missing OHLC columns for %s",
+                    yf_symbol,
+                )
+                return pd.DataFrame(columns=columns)
+
+            if "volume" not in df.columns:
+                df["volume"] = 0
+
+            for column in columns:
+                df[column] = pd.to_numeric(
+                    df[column], errors="coerce"
+                )
+
+            df = df.dropna(subset=required)
+
+            df = df[
+                (df["high"] >= df["low"])
+                & (df["open"] > 0)
+                & (df["high"] > 0)
+                & (df["low"] > 0)
+                & (df["close"] > 0)
+            ]
+
+            # Avoid using a potentially unfinished latest candle.
+            # Yahoo timestamps may be timezone-aware.
+            if len(df) > 0:
+                now = pd.Timestamp.now(tz=df.index.tz)
+                latest_time = df.index[-1]
+
+                if (now - latest_time).total_seconds() < 60:
+                    df = df.iloc[:-1]
+
+            if len(df) < MIN_CANDLES:
+                logger.warning(
+                    "%s has only %s usable candles",
+                    yf_symbol,
+                    len(df),
+                )
+
+            return df[columns].copy()
+
+        except Exception:
+            logger.exception(
+                "Market data fetch failed for %s", symbol
+            )
+            return pd.DataFrame(columns=columns)
