@@ -1,229 +1,310 @@
-""" strategy.py — RSI 50 + Keltner Channel + EMA 20/50 signal strategy. Signals only. This module does not place trades and does not guarantee a win rate. Expected input DataFrame columns: open, high, low, close (case-insensitive). Use fully closed 1-minute candles from the same market feed you check manually. """
-
-from __future__ import annotations
-
-from typing import Any, Dict, Optional
 
 import numpy as np
 import pandas as pd
 
-try:
-    from market_data import MarketDataProvider
-except ImportError:
-    MarketDataProvider = None
+from config import (
+    RSI_PERIOD,
+    EMA_FAST,
+    EMA_SLOW,
+    KELTNER_PERIOD,
+    ATR_PERIOD,
+    ATR_MULTIPLIER,
+    MIN_CANDLES,
+)
 
 
 class InstitutionalEngine:
-    """ Compatibility class retained for existing main.py integrations. CALL: - Price touches/penetrates the lower Keltner band on the latest candle or previous candle. - RSI crosses from below 50 to above 50. - EMA20 > EMA50. PUT: - Price touches/penetrates the upper Keltner band on the latest candle or previous candle. - RSI crosses from above 50 to below 50. - EMA20 < EMA50. Otherwise WAIT. The old fallback momentum signals were removed so that signals follow the stated setup rather than emitting weaker alternatives. """
 
-    def __init__( self, data: Optional[pd.DataFrame] = None, rsi_period: int = 14, atr_period: int = 20, keltner_period: int = 20, atr_multiplier: float = 2.0, min_candles: int = 60, ):
-        if rsi_period not in (7, 14):
-            raise ValueError("rsi_period must be 7 or 14.")
-        if min(atr_period, keltner_period, min_candles) < 1:
-            raise ValueError("Periods and min_candles must be positive.")
-        if atr_multiplier <= 0:
-            raise ValueError("atr_multiplier must be positive.")
-
-        self.data = data.copy() if isinstance(data, pd.DataFrame) else data
+    def __init__(
+        self,
+        data=None,
+        rsi_period=RSI_PERIOD,
+        ema_fast_period=EMA_FAST,
+        ema_slow_period=EMA_SLOW,
+        keltner_period=KELTNER_PERIOD,
+        atr_period=ATR_PERIOD,
+        atr_multiplier=ATR_MULTIPLIER,
+        min_candles=MIN_CANDLES,
+        expiry_seconds=60,
+        timeframe="1m",
+    ):
+        self.data = data
         self.rsi_period = rsi_period
-        self.atr_period = atr_period
+        self.ema_fast_period = ema_fast_period
+        self.ema_slow_period = ema_slow_period
         self.keltner_period = keltner_period
+        self.atr_period = atr_period
         self.atr_multiplier = atr_multiplier
         self.min_candles = min_candles
-        self.market_provider = MarketDataProvider() if MarketDataProvider else None
+        self.expiry_seconds = expiry_seconds
+        self.timeframe = timeframe
 
-@staticmethod
-    def _prepare_data(df: pd.DataFrame) -> pd.DataFrame:
-        if not isinstance(df, pd.DataFrame):
-            raise TypeError("Market data must be a pandas DataFrame.")
+    @staticmethod
+    def _prepare_data(df):
+        if df is None or not isinstance(df, pd.DataFrame):
+            return pd.DataFrame()
 
-        out = df.copy()
-        out.columns = [str(col).strip().lower() for col in out.columns]
-        required = {"open", "high", "low", "close"}
-        missing = required.difference(out.columns)
-        if missing:
-            raise ValueError(f"Missing required OHLC columns: {', '.join(sorted(missing))}")
+        if df.empty:
+            return pd.DataFrame()
 
-        for col in ("open", "high", "low", "close"):
-            out[col] = pd.to_numeric(out[col], errors="coerce")
-        out = out.dropna(subset=["open", "high", "low", "close"])
+        df = df.copy()
+        df.columns = [
+            str(column).strip().lower()
+            for column in df.columns
+        ]
 
-        if (out["high"] < out["low"]).any():
-            raise ValueError("Invalid candle data: high is lower than low.")
-        return out
+        required = ["open", "high", "low", "close"]
 
-    def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate EMA20, EMA50, RSI and Keltner bands (EMA20 ± 2 ATR)."""
-        out = self._prepare_data(df)
+        if not all(column in df.columns for column in required):
+            return pd.DataFrame()
 
-        close = out["close"]
-        high = out["high"]
-        low = out["low"]
+        for column in required:
+            df[column] = pd.to_numeric(
+                df[column],
+                errors="coerce"
+            )
 
-        out["EMA_20"] = close.ewm(
-            span=self.keltner_period, adjust=False,
-            min_periods=self.keltner_period
+        df = df.dropna(subset=required)
+
+        df = df[
+            (df["open"] > 0)
+            & (df["high"] > 0)
+            & (df["low"] > 0)
+            & (df["close"] > 0)
+            & (df["high"] >= df["low"])
+        ]
+
+        return df
+
+    def calculate_indicators(self, df):
+        df = self._prepare_data(df)
+
+        if df.empty:
+            return df
+
+        df["EMA_20"] = df["close"].ewm(
+            span=self.ema_fast_period,
+            adjust=False
         ).mean()
-        out["EMA_50"] = close.ewm(
-            span=50, adjust=False, min_periods=50
+
+        df["EMA_50"] = df["close"].ewm(
+            span=self.ema_slow_period,
+            adjust=False
         ).mean()
 
-        previous_close = close.shift(1)
+        previous_close = df["close"].shift(1)
+
         true_range = pd.concat(
             [
-                high - low,
-                (high - previous_close).abs(),
-                (low - previous_close).abs(),
+                df["high"] - df["low"],
+                (df["high"] - previous_close).abs(),
+                (df["low"] - previous_close).abs(),
             ],
-            axis=1,
+            axis=1
         ).max(axis=1)
 
-        # Wilder-style ATR smoothing, with a 20-candle default.
-        out["ATR"] = true_range.ewm(
-            alpha=1 / self.atr_period, adjust=False,
+        df["ATR"] = true_range.ewm(
+            alpha=1 / self.atr_period,
+            adjust=False,
             min_periods=self.atr_period
         ).mean()
-        out["KC_Middle"] = out["EMA_20"]
-        out["KC_Upper"] = out["KC_Middle"] + self.atr_multiplier * out["ATR"]
-        out["KC_Lower"] = out["KC_Middle"] - self.atr_multiplier * out["ATR"]
 
-        delta = close.diff()
-        gains = delta.clip(lower=0)
-        losses = -delta.clip(upper=0)
-        avg_gain = gains.ewm(
-            alpha=1 / self.rsi_period, adjust=False,
+        df["KC_MIDDLE"] = df["close"].ewm(
+            span=self.keltner_period,
+            adjust=False
+        ).mean()
+
+        df["KC_UPPER"] = (
+            df["KC_MIDDLE"]
+            + self.atr_multiplier * df["ATR"]
+        )
+
+        df["KC_LOWER"] = (
+            df["KC_MIDDLE"]
+            - self.atr_multiplier * df["ATR"]
+        )
+
+        delta = df["close"].diff()
+
+        gain = delta.clip(lower=0)
+        loss = -delta.clip(upper=0)
+
+        average_gain = gain.ewm(
+            alpha=1 / self.rsi_period,
+            adjust=False,
             min_periods=self.rsi_period
         ).mean()
-        avg_loss = losses.ewm(
-            alpha=1 / self.rsi_period, adjust=False,
+
+        average_loss = loss.ewm(
+            alpha=1 / self.rsi_period,
+            adjust=False,
             min_periods=self.rsi_period
         ).mean()
-        rs = avg_gain / avg_loss.replace(0, np.nan)
-        out["RSI"] = 100 - (100 / (1 + rs))
-        out.loc[(avg_loss == 0) & (avg_gain > 0), "RSI"] = 100
-        out.loc[(avg_loss == 0) & (avg_gain == 0), "RSI"] = 50
 
-        # Legacy lowercase aliases retained in case another module uses them.
-        out["atr"] = out["ATR"]
-        out["kc_upper"] = out["KC_Upper"]
-        out["kc_lower"] = out["KC_Lower"]
-        out["rsi"] = out["RSI"]
-        return out
+        relative_strength = average_gain / average_loss.replace(
+            0, np.nan
+        )
 
-@staticmethod
-    def _number(value: Any) -> Optional[float]:
+        df["RSI"] = 100 - (
+            100 / (1 + relative_strength)
+        )
+
+        df.loc[
+            (average_loss == 0) & (average_gain > 0),
+            "RSI"
+        ] = 100
+
+        df.loc[
+            (average_loss == 0) & (average_gain == 0),
+            "RSI"
+        ] = 50
+
+        return df
+
+    @staticmethod
+    def _number(value):
         try:
-            result = float(value)
-            return result if np.isfinite(result) else None
+            if pd.isna(value):
+                return None
+            return float(value)
         except (TypeError, ValueError):
             return None
 
-    def analyze_market(self, df: Optional[pd.DataFrame] = None) -> Dict[str, Any]:
-        """Analyze real candle data. Missing/short data returns WAIT, never fake candles."""
-        source = df if isinstance(df, pd.DataFrame) and not df.empty else self.data
+    def _wait_result(self, reason, close=None, rsi=None,
+                     ema20=None, ema50=None):
+        return {
+            "action": "WAIT",
+            "signal": "WAIT",
+            "entry_price": self._number(close),
+            "close": self._number(close),
+            "score": 0,
+            "reason": reason,
+            "rsi": self._number(rsi),
+            "ema20": self._number(ema20),
+            "ema50": self._number(ema50),
+            "keltner_upper": None,
+            "keltner_lower": None,
+        }
 
-        if not isinstance(source, pd.DataFrame) or source.empty:
-            return {
-                "action": "HOLD",
-                "signal": "WAIT",
-                "entry_price": None,
-                "score": 0,
-                "reason": "No market data available; WAIT.",
-            }
+    def analyze_market(self, df=None):
+        if df is None:
+            df = self.data
 
-        try:
-            prepared = self._prepare_data(source)
-        except (TypeError, ValueError) as exc:
-            return {
-                "action": "HOLD", "signal": "WAIT", "entry_price": None,
-                "score": 0, "reason": f"Invalid market data: {exc}",
-            }
+        prepared = self._prepare_data(df)
+
+        if prepared.empty:
+            return self._wait_result(
+                "No valid market candle data."
+            )
 
         if len(prepared) < self.min_candles:
-            return {
-                "action": "HOLD", "signal": "WAIT",
-                "entry_price": self._number(prepared["close"].iloc[-1]),
-                "score": 0,
-                "reason": f"Need at least {self.min_candles} candles; received {len(prepared)}.",
-            }
+            return self._wait_result(
+                f"Not enough candles: {len(prepared)}; "
+                f"minimum required: {self.min_candles}.",
+                close=prepared["close"].iloc[-1]
+            )
 
         data = self.calculate_indicators(prepared)
-        needed = ["RSI", "EMA_20", "EMA_50", "KC_Upper", "KC_Lower", "ATR"]
-        valid = data.dropna(subset=needed)
-        if len(valid) < 2:
-            return {
-                "action": "HOLD", "signal": "WAIT",
-                "entry_price": self._number(data["close"].iloc[-1]),
-                "score": 0, "reason": "Indicators are not ready; WAIT.",
-            }
 
-        prev = valid.iloc[-2]
-        latest = valid.iloc[-1]
-        prev_rsi = float(prev["RSI"])
-        rsi = float(latest["RSI"])
-        ema20 = float(latest["EMA_20"])
-        ema50 = float(latest["EMA_50"])
+        if data.empty:
+            return self._wait_result(
+                "Indicators could not be calculated."
+            )
 
-        # Band touch is based on candle high/low, not close alone.
+        last = data.iloc[-1]
+        previous = data.iloc[-2]
+
+        close = self._number(last["close"])
+        rsi = self._number(last["RSI"])
+        previous_rsi = self._number(previous["RSI"])
+        ema20 = self._number(last["EMA_20"])
+        ema50 = self._number(last["EMA_50"])
+        upper = self._number(last["KC_UPPER"])
+        lower = self._number(last["KC_LOWER"])
+
+        if any(
+            value is None
+            for value in (
+                close, rsi, previous_rsi, ema20, ema50,
+                upper, lower
+            )
+        ):
+            return self._wait_result(
+                "Indicator values are not ready.",
+                close, rsi, ema20, ema50
+            )
+
+        # Original strategy conditions:
+        # CALL: lower Keltner band touched in latest/previous
+        # candle, RSI crosses upward through 50, EMA20 > EMA50.
         lower_touched = (
-            float(latest["low"]) <= float(latest["KC_Lower"])
-            or float(prev["low"]) <= float(prev["KC_Lower"])
-        )
-        upper_touched = (
-            float(latest["high"]) >= float(latest["KC_Upper"])
-            or float(prev["high"]) >= float(prev["KC_Upper"])
+            last["low"] <= last["KC_LOWER"]
+            or previous["low"] <= previous["KC_LOWER"]
         )
 
-        rsi_cross_up = prev_rsi < 50 <= rsi
-        rsi_cross_down = prev_rsi > 50 >= rsi
+        rsi_cross_up = previous_rsi < 50 <= rsi
         bullish_trend = ema20 > ema50
+
+        # PUT: upper Keltner band touched in latest/previous
+        # candle, RSI crosses downward through 50, EMA20 < EMA50.
+        upper_touched = (
+            last["high"] >= last["KC_UPPER"]
+            or previous["high"] >= previous["KC_UPPER"]
+        )
+
+        rsi_cross_down = previous_rsi > 50 >= rsi
         bearish_trend = ema20 < ema50
 
-        action = "HOLD"
-        signal = "WAIT"
-        score = 0
-        reason = "No clean setup: Keltner touch, RSI-50 crossover and EMA trend must agree."
-
         if lower_touched and rsi_cross_up and bullish_trend:
-            action, signal, score = "BUY", "CALL", 85
-            reason = "CALL setup: lower Keltner band touched, RSI crossed above 50, EMA20 > EMA50."
-        elif upper_touched and rsi_cross_down and bearish_trend:
-            action, signal, score = "SELL", "PUT", 85
-            reason = "PUT setup: upper Keltner band touched, RSI crossed below 50, EMA20 < EMA50."
+            signal = "CALL"
+            reason = (
+                "Lower Keltner touch + RSI crossed above 50 "
+                "+ EMA20 above EMA50."
+            )
+            score = 85
 
-        # Score is a rule-match label, NOT a probability or a verified win rate.
+        elif upper_touched and rsi_cross_down and bearish_trend:
+            signal = "PUT"
+            reason = (
+                "Upper Keltner touch + RSI crossed below 50 "
+                "+ EMA20 below EMA50."
+            )
+            score = 85
+
+        else:
+            signal = "WAIT"
+            score = 0
+            reason = (
+                "The complete strategy conditions are not aligned."
+            )
+
         return {
-            "action": action,
+            "action": signal,
             "signal": signal,
-            "entry_price": float(latest["close"]),
+            "entry_price": close,
+            "close": close,
             "score": score,
             "reason": reason,
             "rsi": rsi,
             "ema20": ema20,
             "ema50": ema50,
-            "keltner_upper": float(latest["KC_Upper"]),
-            "keltner_lower": float(latest["KC_Lower"]),
+            "keltner_upper": upper,
+            "keltner_lower": lower,
         }
 
-    def evaluate_signal(self, symbol_or_df):
-        """Keep the old public method name for compatibility with existing main.py."""
-        if isinstance(symbol_or_df, str):
-            if not self.market_provider:
-                return self.analyze_market(None)
-            try:
-                df = self.market_provider.get_historical_data(symbol_or_df)
-            except Exception as exc:
-                return {
-                    "action": "HOLD", "signal": "WAIT", "entry_price": None,
-                    "score": 0, "reason": f"Market data fetch failed: {exc}",
-                }
-            return self.analyze_market(df)
+    def generate_signal(self, df=None, symbol=None):
+        return self.analyze_market(df=df)
 
+    def evaluate_signal(self, symbol_or_df=None):
         if isinstance(symbol_or_df, pd.DataFrame):
-            return self.analyze_market(symbol_or_df)
+            return self.analyze_market(df=symbol_or_df)
 
-        return self.analyze_market(self.data)
+        if self.data is not None:
+            return self.analyze_market(df=self.data)
+
+        return self._wait_result(
+            "Pass a DataFrame containing OHLC candle data."
+        )
 
 
-# Alias for compatibility with the newer main.py version provided earlier.
 Strategy = InstitutionalEngine
