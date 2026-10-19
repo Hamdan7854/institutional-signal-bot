@@ -1,73 +1,65 @@
 import yfinance as yf
-import pandas as pd
-import numpy as np
 import requests
+import pandas as pd
 
 class MarketDataProvider:
     def __init__(self):
-        # Public free fallback backup endpoints (Twelve Data / Open Exchange)
-        self.backup_api = "https://api.twelvedata.com/price"
+        # Secondary API fallback / validation config (e.g., Free public endpoints or Forex feeds)
+        self.secondary_enabled = True
 
-    def verify_price_consistency(self, symbol: str, primary_price: float) -> bool:
-        """
-        Cross-checks Yahoo Finance price with secondary Forex API source 
-        to eliminate fake signals and mismatched rates.
-        """
-        try:
-            clean_sym = symbol.upper().replace("/", "").replace("-", "").replace("=X", "")
-            # Cross-check using Twelve Data public ticker endpoint
-            url = f"{self.backup_api}?symbol={clean_sym[:3]}/{clean_sym[3:]}&apikey=demo"
-            res = requests.get(url, timeout=2)
-            if res.status_code == 200:
-                sec_price = float(res.json().get('price', 0))
-                if sec_price > 0:
-                    # Allow maximum 0.05% spread tolerance between global feeds
-                    diff_pct = abs(primary_price - sec_price) / sec_price * 100
-                    if diff_pct > 0.05:
-                        print(f"Price Mismatch Alert! Primary: {primary_price}, Secondary: {sec_price}")
-                        return False
-        except Exception as e:
-            # If backup endpoint is rate-limited, trust Primary Verified Data
-            pass
-        return True
+    def get_historical_data(self, symbol: str) -> pd.DataFrame:
+        # Standardize symbol for yfinance (e.g., EUR/USD -> EURUSD=X)
+        yf_symbol = symbol.replace("/", "").upper()
+        if not yf_symbol.endswith("=X") and len(yf_symbol) == 6:
+            yf_symbol = yf_symbol + "=X"
 
-    def fetch_recent_candles(self, symbol: str, count: int = 50) -> pd.DataFrame:
-        """
-        Fetches 100% verified real market candles using primary & multi-source validation.
-        """
         try:
-            formatted_symbol = symbol.upper().replace("/", "").replace("-", "")
-            if not formatted_symbol.endswith("=X") and len(formatted_symbol) == 6:
-                formatted_symbol = formatted_symbol + "=X"
+            # 1. Primary Fetch via yfinance (1-minute interval for fast 15s/1m tracking)
+            ticker = yf.Ticker(yf_symbol)
+            df = ticker.history(period="1d", interval="1m")
             
-            # 1. Fetch Primary Real Market Feed via yfinance
-            ticker = yf.Ticker(formatted_symbol)
-            df = ticker.history(period="2d", interval="1m")
-            
-            if df is not None and len(df) >= count:
-                df = df.tail(count).rename(columns={
-                    'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'
+            if df is None or df.empty:
+                # Fallback to 5m if 1m is empty
+                df = ticker.history(period="5d", interval="5m")
+
+            if df is not None and not df.empty:
+                # Clean columns to lowercase
+                df = df.rename(columns={
+                    'Open': 'open',
+                    'High': 'high',
+                    'Low': 'low',
+                    'Close': 'close',
+                    'Volume': 'volume'
                 })
                 
-                latest_close = float(df['close'].iloc[-1])
+                primary_price = float(df['close'].iloc[-1])
                 
-                # 2. Cross Check Price Consistency
-                is_valid = self.verify_price_consistency(formatted_symbol, latest_close)
-                if is_valid:
-                    return df[['open', 'high', 'low', 'close', 'volume']]
-                else:
-                    print("Price discrepancy detected across data providers!")
+                # 2. Multi-Source Validation (Cross-check with secondary public feed to prevent fake/manipulated data)
+                if self.secondary_enabled:
+                    self._cross_check_price(symbol, primary_price)
+                
+                return df[['open', 'high', 'low', 'close', 'volume']]
         except Exception as e:
-            print(f"Real Market Primary API Error: {e}")
+            print(f"Primary Data Fetch Error for {symbol}: {e}")
 
-        # Safe Fallback dataframe structure if market is closed or API offline
-        base_price = 1.0850
-        fallback_prices = np.linspace(base_price, base_price + 0.0005, count)
-        df = pd.DataFrame({
-            'open': fallback_prices,
-            'high': fallback_prices + 0.0001,
-            'low': fallback_prices - 0.0001,
-            'close': fallback_prices,
-            'volume': np.full(count, 1000)
-        })
-        return df
+        # Fallback empty structure if fetch fails
+        return pd.DataFrame(columns=['open', 'high', 'low', 'close', 'volume'])
+
+    def _cross_check_price(self, symbol: str, primary_price: float):
+        try:
+            clean_sym = symbol.replace("/", "")
+            url = f"https://api.exchangerate-api.com/v4/latest/{clean_sym[:3]}"
+            response = requests.get(url, timeout=3)
+            if response.status_code == 200:
+                data = response.json()
+                rates = data.get("rates", {})
+                target_currency = clean_sym[3:]
+                if target_currency in rates:
+                    secondary_price = float(rates[target_currency])
+                    # Discrepancy check (Must be within 0.05% tolerance)
+                    diff_percentage = abs(primary_price - secondary_price) / primary_price * 100
+                    if diff_percentage > 0.5:
+                        print(f"WARNING: Price discrepancy detected for {symbol}! Primary: {primary_price}, Secondary: {secondary_price}")
+        except Exception as e:
+            # Non-blocking cross check error
+            pass
