@@ -1,6 +1,6 @@
 python-telegram-bot==20.7
 aiohttp==3.9.1
-pandas==2.1.4
 yfinance==0.2.33
 twelvedata==1.2.10
 numpy==1.26.2
+pandas==2.1.4 --only-binary=:all:
