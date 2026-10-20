@@ -1,98 +1,41 @@
-
-import logging
-
+import asyncio
 import pandas as pd
 import yfinance as yf
-
-from config import MARKET_INTERVAL, MARKET_PERIOD
-
-logger = logging.getLogger(__name__)
-
+from twelvedata import TDClient
+import config
 
 class MarketDataProvider:
+    def __init__(self):
+        self.use_td = config.TWELVEDATA_API_KEY != "YOUR_TWELVEDATA_API_KEY"
+        if self.use_td:
+            self.td_client = TDClient(apikey=config.TWELVEDATA_API_KEY)
 
-    @staticmethod
-    def normalize_symbol(symbol):
-        clean = str(symbol).strip().upper()
-        clean = clean.replace("/", "").replace("-", "")
+    async def fetch_ohlcv(self, symbol: str) -> pd.DataFrame:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._sync_fetch, symbol)
 
-        if clean.endswith("=X"):
-            return clean
-
-        if len(clean) == 6 and clean.isalpha():
-            return clean + "=X"
-
-        raise ValueError(
-            f"Unsupported forex pair: {symbol}. "
-            "Example: EUR/USD"
-        )
-
-    def get_historical_data(self, symbol):
-        columns = ["open", "high", "low", "close", "volume"]
-
-        try:
-            ticker_symbol = self.normalize_symbol(symbol)
-
-            ticker = yf.Ticker(ticker_symbol)
-            df = ticker.history(
-                period=MARKET_PERIOD,
-                interval=MARKET_INTERVAL,
-                auto_adjust=False
-            )
-
-            if df is None or df.empty:
-                logger.warning(
-                    "No candle data received for %s",
-                    ticker_symbol
-                )
-                return pd.DataFrame(columns=columns)
-
-            df = df.rename(columns={
-                "Open": "open",
-                "High": "high",
-                "Low": "low",
-                "Close": "close",
-                "Volume": "volume",
-            })
-
-            df.columns = [
-                str(column).strip().lower()
-                for column in df.columns
-            ]
-
-            required = ["open", "high", "low", "close"]
-
-            if not all(column in df.columns for column in required):
-                logger.warning("Required OHLC columns missing.")
-                return pd.DataFrame(columns=columns)
-
-            if "volume" not in df.columns:
-                df["volume"] = 0
-
-            for column in columns:
-                df[column] = pd.to_numeric(
-                    df[column],
-                    errors="coerce"
-                )
-
-            df = df.dropna(subset=required)
-
-            df = df[
-                (df["open"] > 0)
-                & (df["high"] > 0)
-                & (df["low"] > 0)
-                & (df["close"] > 0)
-                & (df["high"] >= df["low"])
-            ]
-
-            if df.empty:
-                return pd.DataFrame(columns=columns)
-
-            return df[columns].copy()
-
-        except Exception:
-            logger.exception(
-                "Market data request failed for %s",
-                symbol
-            )
-            return pd.DataFrame(columns=columns)
+    def _sync_fetch(self, symbol: str) -> pd.DataFrame:
+        if self.use_td:
+            try:
+                ts = self.td_client.time_series(
+                    symbol=symbol,
+                    interval=config.TIMEFRAME,
+                    outputsize=config.CANDLE_COUNT
+                ).as_pandas()
+                if not ts.empty:
+                    df = ts.sort_index(ascending=True)
+                    df.rename(columns={
+                        'open': 'Open', 'high': 'High', 
+                        'low': 'Low', 'close': 'Close', 'volume': 'Volume'
+                    }, inplace=True)
+                    return df
+            except Exception:
+                pass
+        
+        # Secondary Data Source: Yahoo Finance
+        yf_symbol = symbol.replace("/", "") + "=X"
+        ticker = yf.Ticker(yf_symbol)
+        df = ticker.history(period="5d", interval=config.TIMEFRAME)
+        if df.empty:
+            raise ValueError(f"Unable to fetch valid OHLCV candle data for: {symbol}")
+        return df
