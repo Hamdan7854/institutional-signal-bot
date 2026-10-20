@@ -8,7 +8,7 @@ from market_data import MarketDataProvider
 from strategy import HighProbabilityStrategy
 
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
@@ -17,8 +17,10 @@ data_provider = MarketDataProvider()
 strategy_engine = HighProbabilityStrategy()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
     msg = (
         "<b>5-Minute Forex Signal System Active</b>\n\n"
+        f"Your Chat ID: <code>{chat_id}</code>\n\n"
         "Commands:\n"
         "• <code>/signal EUR/USD</code> - Calculate signal for a specific pair\n"
         "• <code>/scan</code> - Scan all monitored currency pairs\n"
@@ -34,7 +36,7 @@ async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     raw_pair = context.args[0].upper()
     pair = f"{raw_pair[:3]}/{raw_pair[3:]}" if "/" not in raw_pair and len(raw_pair) == 6 else raw_pair
 
-    await update.message.reply_text(f"Analyzing 5M market structures for <b>{pair}</b>...", parse_mode='HTML')
+    await update.message.reply_text(f"Analyzing SM market structures for <b>{pair}</b>...", parse_mode='HTML')
 
     try:
         df = await data_provider.fetch_ohlcv(pair)
@@ -49,14 +51,14 @@ async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             direction_label = "🟢 CALL (BUY)" if res['signal'] == "CALL" else "🔴 PUT (SELL)"
             output = (
-                f"<b>HIGH ACCURACY 5M SIGNAL</b>\n\n"
-                f"<b>Asset:</b> {pair}\n"
-                f"<b>Direction:</b> {direction_label}\n"
-                f"<b>Entry Price:</b> {res['price']:.5f}\n"
-                f"<b>Timeframe:</b> 5 Minutes\n"
-                f"<b>Expiry Duration:</b> 5 Minutes\n"
-                f"<b>Confidence Rating:</b> {res['confidence']}%\n\n"
-                f"<b>Confluence Mechanics:</b>\n• " + "\n• ".join(res['reasons'])
+                "<b>HIGH ACCURACY SM SIGNAL</b>\n\n"
+                f"• <b>Asset:</b> {pair}\n"
+                f"• <b>Direction:</b> {direction_label}\n"
+                f"• <b>Entry Price:</b> {res['price']:.5f}\n"
+                f"• <b>Timeframe:</b> 5 Minutes\n"
+                f"• <b>Expiry Duration:</b> 5 Minutes\n"
+                f"• <b>Confidence Rating:</b> {res['confidence']}%\n"
+                f"• <b>Confluence Mechanics:</b>\n" + "\n".join([f"  - {r}" for r in res['reasons']])
             )
         await update.message.reply_text(output, parse_mode='HTML')
     except Exception as e:
@@ -75,9 +77,9 @@ async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 signals_found += 1
                 direction_label = "🟢 CALL" if res['signal'] == "CALL" else "🔴 PUT"
                 output = (
-                    f"🎯 <b>ALERT: {pair}</b>\n"
-                    f"<b>Direction:</b> {direction_label} | <b>Expiry:</b> 5M\n"
-                    f"<b>Entry:</b> {res['price']:.5f} | <b>Confidence:</b> {res['confidence']}%"
+                    f"🚨 <b>ALERT: {pair}</b>\n"
+                    f"• <b>Direction:</b> {direction_label} | <b>Expiry:</b> 5M\n"
+                    f"• <b>Entry:</b> {res['price']:.5f} | <b>Confidence:</b> {res['confidence']}%"
                 )
                 await update.message.reply_text(output, parse_mode='HTML')
         except Exception as e:
@@ -103,7 +105,7 @@ async def main():
     web_app = web.Application()
     web_app.router.add_get("/", handle_health_check)
     web_app.router.add_get("/health", handle_health_check)
-    
+
     runner = web.AppRunner(web_app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", config.PORT)
