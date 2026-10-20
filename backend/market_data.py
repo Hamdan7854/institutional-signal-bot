@@ -25,7 +25,6 @@ class MarketDataProvider:
             raise ValueError("Twelve Data API Key is missing. Please set TWELVEDATA_API_KEY in Render Environment Variables.")
 
         try:
-            # Clean symbol format for Twelve Data (e.g., EUR/USD)
             formatted_symbol = symbol.upper()
             if "/" not in formatted_symbol and len(formatted_symbol) == 6:
                 formatted_symbol = f"{formatted_symbol[:3]}/{formatted_symbol[3:]}"
@@ -40,25 +39,19 @@ class MarketDataProvider:
             if df is None or df.empty:
                 raise ValueError(f"Empty dataframe returned from Twelve Data for {formatted_symbol}")
 
-            # Twelve Data returns dataframe with index as datetime or columns reversed sometimes
             df = df.sort_index(ascending=True)
             
-            # Standardize column names
-            rename_map = {}
-            for col in df.columns:
-                lower_col = col.lower()
-                if 'open' in lower_col: rename_map[col] = 'open'
-                elif 'high' in lower_col: rename_map[col] = 'high'
-                elif 'low' in lower_col: rename_map[col] = 'low'
-                elif 'close' in lower_col: rename_map[col] = 'close'
-                elif 'volume' in lower_col: rename_map[col] = 'volume'
-            
-            df.rename(columns=rename_map, inplace=True)
+            # Reset index if datetime is stored as index to make it a standard column temporarily if needed
+            if isinstance(df.index, pd.DatetimeIndex):
+                df = df.reset_index()
+
+            # Automatically map any casing variation of columns to lowercase
+            df.columns = [str(col).strip().lower() for col in df.columns]
             
             required_cols = ['open', 'high', 'low', 'close']
             for col in required_cols:
                 if col not in df.columns:
-                    raise ValueError(f"Missing required column {col} in fetched data.")
+                    raise ValueError(f"Missing required column '{col}' in fetched data. Available columns: {list(df.columns)}")
                 df[col] = df[col].astype(float)
 
             return df
