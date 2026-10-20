@@ -1,47 +1,29 @@
-
 import os
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+# API Credentials
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")
+TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "YOUR_TWELVEDATA_API_KEY")
+PORT = int(os.getenv("PORT", 8080))
 
-PAIRS = [
-    "EUR/USD",
-    "GBP/USD",
-    "USD/JPY",
-    "AUD/USD",
-    "USD/CAD",
-    "USD/CHF",
-    "EUR/GBP",
-    "EUR/JPY",
-    "GBP/JPY",
-    "EUR/CHF",
-    "EUR/CAD",
-    "EUR/AUD",
-    "AUD/JPY",
-    "AUD/CAD",
-    "AUD/CHF",
-    "CAD/JPY",
-    "CAD/CHF",
-    "CHF/JPY",
-    "GBP/CHF",
-    "GBP/CAD",
-    "GBP/AUD",
+# Forex Asset Universe
+FOREX_PAIRS = [
+    "EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD",
+    "USD/CAD", "EUR/GBP", "EUR/JPY", "GBP/JPY"
 ]
 
-CANDLE_DURATION_SEC = 60
-SIGNAL_EXPIRY_SECONDS = 60
+# Timeframe and Strategy Parameters
+TIMEFRAME = "5m"
+CANDLE_COUNT = 100
+
+EMA_FAST = 9
+EMA_SLOW = 21
+EMA_TREND = 50
 
 RSI_PERIOD = 14
-EMA_FAST = 20
-EMA_SLOW = 50
+RSI_BUY_MIN = 45.0
+RSI_BUY_MAX = 68.0
+RSI_SELL_MIN = 32.0
+RSI_SELL_MAX = 55.0
 
-KELTNER_PERIOD = 20
-ATR_PERIOD = 20
-ATR_MULTIPLIER = 2.0
-
-MIN_CANDLES = 60
-MARKET_INTERVAL = "1m"
-MARKET_PERIOD = "1d"
-
-REQUEST_TIMEOUT = 10
-TELEGRAM_API_TIMEOUT = 10
+BB_PERIOD = 20
+BB_STD_DEV = 2.0
