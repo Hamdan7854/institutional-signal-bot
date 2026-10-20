@@ -12,8 +12,8 @@ FOREX_PAIRS = [
     "USD/CAD", "EUR/GBP", "EUR/JPY", "GBP/JPY"
 ]
 
-# Timeframe and Strategy Parameters
-TIMEFRAME = "5m"
+# Timeframe and Strategy Parameters (Changed 5m to 5min for Twelve Data compatibility)
+TIMEFRAME = "5min"
 CANDLE_COUNT = 100
 
 EMA_FAST = 9
