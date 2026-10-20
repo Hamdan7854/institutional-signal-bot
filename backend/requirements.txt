@@ -1,4 +1,4 @@
-python-telegram-bot20.7
+python-telegram-bot==20.7
 aiohttp3.9.1
 pandas2.1.4
 yfinance0.2.33
