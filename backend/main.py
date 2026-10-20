@@ -22,17 +22,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<b>5-Minute Forex Signal System Active</b>\n\n"
         f"Your Chat ID: <code>{chat_id}</code>\n\n"
         "Commands:\n"
-        "• <code>/signal</code> - Scan all monitored pairs and get active signals\n"
+        "• <code>/signal</code> - Scan all monitored pairs safely (Rate-limit friendly)\n"
         "• <code>/signal EUR/USD</code> - Calculate signal for a specific pair\n"
-        "• <code>/scan</code> - Quick scan all pairs\n"
-        "• <code>/pairs</code> - List active currency pairs"
+        "• <code>/scan</code> - Quick scan all pairs"
     )
     await update.message.reply_text(msg, parse_mode='HTML')
 
 async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Agar user ne sirf /signal bheja hai bina kisi pair ke, toh saare pairs scan honge jo criteria meet karenge
+    # Agar user ne sirf /signal bheja hai bina kisi pair ke
     if not context.args:
-        await update.message.reply_text("🔎 Scanning all forex pairs for strategy criteria...", parse_mode='HTML')
+        await update.message.reply_text("🔎 Scanning forex pairs safely (To respect API free tier limits, this will take about a minute)...", parse_mode='HTML')
         signals_found = 0
 
         for pair in config.FOREX_PAIRS:
@@ -53,11 +52,17 @@ async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"• <b>Confluence Mechanics:</b>\n" + "\n".join([f"  - {r}" for r in res['reasons']])
                     )
                     await update.message.reply_text(output, parse_mode='HTML')
+                
+                # 8 seconds delay taaki Twelve Data ki free limit (8 req/min) cross na ho
+                await asyncio.sleep(8)
             except Exception as e:
                 logger.error(f"Scan failure on {pair}: {e}")
+                await asyncio.sleep(5)
 
         if signals_found == 0:
             await update.message.reply_text("ℹ️ Scan Complete: No pairs currently meet strict confluence criteria.")
+        else:
+            await update.message.reply_text("✅ Full market scan completed successfully!")
         return
 
     # Agar user ne specific pair diya hai (e.g., /signal EURUSD)
