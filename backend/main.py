@@ -22,17 +22,45 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<b>5-Minute Forex Signal System Active</b>\n\n"
         f"Your Chat ID: <code>{chat_id}</code>\n\n"
         "Commands:\n"
+        "• <code>/signal</code> - Scan all monitored pairs and get active signals\n"
         "• <code>/signal EUR/USD</code> - Calculate signal for a specific pair\n"
-        "• <code>/scan</code> - Scan all monitored currency pairs\n"
+        "• <code>/scan</code> - Quick scan all pairs\n"
         "• <code>/pairs</code> - List active currency pairs"
     )
     await update.message.reply_text(msg, parse_mode='HTML')
 
 async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Agar user ne sirf /signal bheja hai bina kisi pair ke, toh saare pairs scan honge jo criteria meet karenge
     if not context.args:
-        await update.message.reply_text("Usage: <code>/signal EUR/USD</code>", parse_mode='HTML')
+        await update.message.reply_text("🔎 Scanning all forex pairs for strategy criteria...", parse_mode='HTML')
+        signals_found = 0
+
+        for pair in config.FOREX_PAIRS:
+            try:
+                df = await data_provider.fetch_ohlcv(pair)
+                res = strategy_engine.generate_signal(df)
+                if res['signal'] != "NEUTRAL":
+                    signals_found += 1
+                    direction_label = "🟢 CALL (BUY)" if res['signal'] == "CALL" else "🔴 PUT (SELL)"
+                    output = (
+                        "<b>HIGH ACCURACY SM SIGNAL</b>\n\n"
+                        f"• <b>Asset:</b> {pair}\n"
+                        f"• <b>Direction:</b> {direction_label}\n"
+                        f"• <b>Entry Price:</b> {res['price']:.5f}\n"
+                        f"• <b>Timeframe:</b> 5 Minutes\n"
+                        f"• <b>Expiry Duration:</b> 5 Minutes\n"
+                        f"• <b>Confidence Rating:</b> {res['confidence']}%\n"
+                        f"• <b>Confluence Mechanics:</b>\n" + "\n".join([f"  - {r}" for r in res['reasons']])
+                    )
+                    await update.message.reply_text(output, parse_mode='HTML')
+            except Exception as e:
+                logger.error(f"Scan failure on {pair}: {e}")
+
+        if signals_found == 0:
+            await update.message.reply_text("ℹ️ Scan Complete: No pairs currently meet strict confluence criteria.")
         return
 
+    # Agar user ne specific pair diya hai (e.g., /signal EURUSD)
     raw_pair = context.args[0].upper()
     pair = f"{raw_pair[:3]}/{raw_pair[3:]}" if "/" not in raw_pair and len(raw_pair) == 6 else raw_pair
 
@@ -66,27 +94,7 @@ async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Processing Error: {str(e)}")
 
 async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔎 Initiating cross-pair matrix scan...")
-    signals_found = 0
-
-    for pair in config.FOREX_PAIRS:
-        try:
-            df = await data_provider.fetch_ohlcv(pair)
-            res = strategy_engine.generate_signal(df)
-            if res['signal'] != "NEUTRAL":
-                signals_found += 1
-                direction_label = "🟢 CALL" if res['signal'] == "CALL" else "🔴 PUT"
-                output = (
-                    f"🚨 <b>ALERT: {pair}</b>\n"
-                    f"• <b>Direction:</b> {direction_label} | <b>Expiry:</b> 5M\n"
-                    f"• <b>Entry:</b> {res['price']:.5f} | <b>Confidence:</b> {res['confidence']}%"
-                )
-                await update.message.reply_text(output, parse_mode='HTML')
-        except Exception as e:
-            logger.error(f"Scan failure on {pair}: {e}")
-
-    if signals_found == 0:
-        await update.message.reply_text("ℹ️ Matrix Scan Complete: No pairs currently meet strict confluence criteria.")
+    await signal_command(update, context)
 
 async def handle_health_check(request):
     return web.Response(text="Signal Bot Daemon Alive", status=200)
@@ -101,7 +109,6 @@ async def main():
     await app.start()
     await app.updater.start_polling()
 
-    # Embedded HTTP server to satisfy Render port binding health checks
     web_app = web.Application()
     web_app.router.add_get("/", handle_health_check)
     web_app.router.add_get("/health", handle_health_check)
