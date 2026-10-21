@@ -6,11 +6,8 @@ class MarketAnalyzer:
     def get_multi_platform_confirmation(symbol="^GSPC"):
         """
         Confirms market direction across external platforms (e.g., Yahoo Finance).
-        For synthetic indices (like R_100), it queries benchmark or proxy tickers, 
-        or validates data availability.
         """
         try:
-            # Using S&P 500 or Gold/Forex proxy as a secondary confirmation source
             ticker = yf.Ticker(symbol)
             hist = ticker.history(period="2d", interval="1h")
             if hist.empty:
