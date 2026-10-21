@@ -1,130 +1,86 @@
 import asyncio
+import json
 import logging
-from aiohttp import web
+import sys
+import websockets
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
-import config
-from market_data import MarketDataProvider
-from strategy import HighProbabilityStrategy
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+from config import (
+    TELEGRAM_BOT_TOKEN, APP_ID, DERIV_TOKEN, SYMBOL,
+    SMA_FAST_PERIOD, SMA_SLOW_PERIOD
 )
-logger = logging.getLogger(__name__)
+from strategy import TradingStrategy
 
-data_provider = MarketDataProvider()
-strategy_engine = HighProbabilityStrategy()
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    msg = (
-        "<b>5-Minute Forex Signal System Active</b>\n\n"
-        f"Your Chat ID: <code>{chat_id}</code>\n\n"
-        "Commands:\n"
-        "• <code>/signal</code> - Scan all monitored pairs safely (Rate-limit friendly)\n"
-        "• <code>/signal EUR/USD</code> - Calculate signal for a specific pair\n"
-        "• <code>/scan</code> - Quick scan all pairs"
-    )
-    await update.message.reply_text(msg, parse_mode='HTML')
+class TelegramSignalBot:
+    def __init__(self):
+        self.ws_url = f"wss://ws.binaryws.com/websockets/v3?app_id={APP_ID}"
+        self.price_history = []
 
-async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Agar user ne sirf /signal bheja hai bina kisi pair ke
-    if not context.args:
-        await update.message.reply_text("🔎 Scanning forex pairs safely (To respect API free tier limits, this will take about a minute)...", parse_mode='HTML')
-        signals_found = 0
-
-        for pair in config.FOREX_PAIRS:
+    async def fetch_live_ticks(self):
+        """Background task to maintain tick history from Deriv WebSocket."""
+        while True:
             try:
-                df = await data_provider.fetch_ohlcv(pair)
-                res = strategy_engine.generate_signal(df)
-                if res['signal'] != "NEUTRAL":
-                    signals_found += 1
-                    direction_label = "🟢 CALL (BUY)" if res['signal'] == "CALL" else "🔴 PUT (SELL)"
-                    output = (
-                        "<b>HIGH ACCURACY SM SIGNAL</b>\n\n"
-                        f"• <b>Asset:</b> {pair}\n"
-                        f"• <b>Direction:</b> {direction_label}\n"
-                        f"• <b>Entry Price:</b> {res['price']:.5f}\n"
-                        f"• <b>Timeframe:</b> 5 Minutes\n"
-                        f"• <b>Expiry Duration:</b> 5 Minutes\n"
-                        f"• <b>Confidence Rating:</b> {res['confidence']}%\n"
-                        f"• <b>Confluence Mechanics:</b>\n" + "\n".join([f"  - {r}" for r in res['reasons']])
-                    )
-                    await update.message.reply_text(output, parse_mode='HTML')
-                
-                # 8 seconds delay taaki Twelve Data ki free limit (8 req/min) cross na ho
-                await asyncio.sleep(8)
+                async with websockets.connect(self.ws_url) as ws:
+                    # Authorize
+                    await ws.send(json.dumps({"authorize": DERIV_TOKEN}))
+                    auth_res = await ws.recv()
+                    
+                    # Subscribe ticks
+                    await ws.send(json.dumps({"ticks": SYMBOL, "subscribe": 1}))
+                    
+                    async for message in ws:
+                        data = json.loads(message)
+                        if data.get("msg_type") == "tick":
+                            price = float(data["tick"]["quote"])
+                            self.price_history.append(price)
+                            if len(self.price_history > 150):
+                                self.price_history.pop(0)
             except Exception as e:
-                logger.error(f"Scan failure on {pair}: {e}")
+                logging.error(f"Deriv WS Connection error: {e}. Reconnecting in 5s...")
                 await asyncio.sleep(5)
 
-        if signals_found == 0:
-            await update.message.reply_text("ℹ️ Scan Complete: No pairs currently meet strict confluence criteria.")
-        else:
-            await update.message.reply_text("✅ Full market scan completed successfully!")
-        return
+    async def handle_signal_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Triggered instantly when user sends /signal on Telegram."""
+        user_msg = "🔍 Analyzing market data across platforms within seconds..."
+        await update.message.reply_text(user_msg)
 
-    # Agar user ne specific pair diya hai (e.g., /signal EURUSD)
-    raw_pair = context.args[0].upper()
-    pair = f"{raw_pair[:3]}/{raw_pair[3:]}" if "/" not in raw_pair and len(raw_pair) == 6 else raw_pair
+        if len(self.price_history) < SMA_SLOW_PERIOD:
+            await update.message.reply_text("⚠️ Still collecting tick history. Please try again in a few seconds.")
+            return
 
-    await update.message.reply_text(f"Analyzing SM market structures for <b>{pair}</b>...", parse_mode='HTML')
+        signal, reason = TradingStrategy.evaluate_signal(
+            self.price_history, SMA_FAST_PERIOD, SMA_SLOW_PERIOD
+        )
 
-    try:
-        df = await data_provider.fetch_ohlcv(pair)
-        res = strategy_engine.generate_signal(df)
+        current_price = self.price_history[-1] if self.price_history else 0.0
+        response_text = (
+            f"📊 **Market Analysis Report** ({SYMBOL})\n\n"
+            f"💵 **Current Price:** {current_price}\n"
+            f"🎯 **Generated Signal:** `{signal}`\n"
+            f"📝 **Details:** {reason}"
+        )
+        await update.message.reply_text(response_text, parse_mode="Markdown")
 
-        if res['signal'] == "NEUTRAL":
-            output = (
-                f"<b>NO SIGNAL GENERATED ({pair})</b>\n\n"
-                "<i>Market Regime: Neutral / High Friction</i>\n"
-                "The engine has suppressed entry due to unaligned confluence criteria."
-            )
-        else:
-            direction_label = "🟢 CALL (BUY)" if res['signal'] == "CALL" else "🔴 PUT (SELL)"
-            output = (
-                "<b>HIGH ACCURACY SM SIGNAL</b>\n\n"
-                f"• <b>Asset:</b> {pair}\n"
-                f"• <b>Direction:</b> {direction_label}\n"
-                f"• <b>Entry Price:</b> {res['price']:.5f}\n"
-                f"• <b>Timeframe:</b> 5 Minutes\n"
-                f"• <b>Expiry Duration:</b> 5 Minutes\n"
-                f"• <b>Confidence Rating:</b> {res['confidence']}%\n"
-                f"• <b>Confluence Mechanics:</b>\n" + "\n".join([f"  - {r}" for r in res['reasons']])
-            )
-        await update.message.reply_text(output, parse_mode='HTML')
-    except Exception as e:
-        logger.error(f"Error evaluating pair {pair}: {e}")
-        await update.message.reply_text(f"❌ Processing Error: {str(e)}")
+    def run(self):
+        # Start background tick collector loop
+        loop = asyncio.get_event_loop()
+        loop.create_task(self.fetch_live_ticks())
 
-async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await signal_command(update, context)
-
-async def handle_health_check(request):
-    return web.Response(text="Signal Bot Daemon Alive", status=200)
-
-async def main():
-    app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("signal", signal_command))
-    app.add_handler(CommandHandler("scan", scan_command))
-
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
-
-    web_app = web.Application()
-    web_app.router.add_get("/", handle_health_check)
-    web_app.router.add_get("/health", handle_health_check)
-
-    runner = web.AppRunner(web_app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", config.PORT)
-    await site.start()
-
-    logger.info(f"Engine operational. HTTP Server running on port {config.PORT}")
-    await asyncio.Event().wait()
+        # Start Telegram Bot application
+        app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+        app.add_handler(CommandHandler("signal", self.handle_signal_command))
+        
+        logging.info("Telegram Bot is polling for /signal commands...")
+        app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    bot = TelegramSignalBot()
+    bot.run()
