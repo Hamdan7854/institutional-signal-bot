@@ -9,9 +9,6 @@ class TradingStrategy:
 
     @classmethod
     def evaluate_signal(cls, price_history, fast_period, slow_period):
-        """
-        Evaluates Fast and Slow SMA crossovers and integrates multi-platform confirmation.
-        """
         if len(price_history) < slow_period + 1:
             return "HOLD", "Insufficient price history for analysis."
 
@@ -24,17 +21,16 @@ class TradingStrategy:
         if not (sma_fast and sma_slow and prev_fast and prev_slow):
             return "HOLD", "Calculating indicators..."
 
-        # Multi-platform check
         ext_trend, ext_conf = MarketAnalyzer.get_multi_platform_confirmation()
 
         signal = "HOLD"
         reason = "No crossover detected."
 
         if prev_fast <= prev_slow and sma_fast > sma_slow:
-            signal = "CALL" (BUY)
-            reason = f"Bullish SMA Crossover (Fast: {sma_fast:.2f} > Slow: {sma_slow:.2f}). External Trend: {ext_trend}"
+            signal = "CALL (BUY)"
+            reason = f"Bullish Crossover (Fast: {sma_fast:.2f} > Slow: {sma_slow:.2f}). External Trend: {ext_trend}"
         elif prev_fast >= prev_slow and sma_fast < sma_slow:
-            signal = "PUT" (SELL)
-            reason = f"Bearish SMA Crossover (Fast: {sma_fast:.2f} < Slow: {sma_slow:.2f}). External Trend: {ext_trend}"
+            signal = "PUT (SELL)"
+            reason = f"Bearish Crossover (Fast: {sma_fast:.2f} < Slow: {sma_slow:.2f}). External Trend: {ext_trend}"
 
         return signal, reason
