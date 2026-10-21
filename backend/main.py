@@ -25,13 +25,14 @@ class TelegramSignalBot:
         self.price_history = []
 
     async def fetch_live_ticks(self):
-        """Background task with User-Agent headers to bypass connection blocks."""
+        """Background task with additional_headers to bypass connection blocks."""
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
         while True:
             try:
-                async with websockets.connect(self.ws_url, extra_headers=headers) as ws:
+                # Fixed: extra_headers changed to additional_headers
+                async with websockets.connect(self.ws_url, additional_headers=headers) as ws:
                     await ws.send(json.dumps({"authorize": DERIV_TOKEN}))
                     await ws.recv()
                     
@@ -73,7 +74,6 @@ class TelegramSignalBot:
         loop = asyncio.get_event_loop()
         loop.create_task(self.fetch_live_ticks())
 
-        # Build application and clear pending updates to avoid Telegram Conflict error
         app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
         app.add_handler(CommandHandler("signal", self.handle_signal_command))
         
