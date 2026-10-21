@@ -25,15 +25,16 @@ class TelegramSignalBot:
         self.price_history = []
 
     async def fetch_live_ticks(self):
-        """Background task to maintain tick history from Deriv WebSocket."""
+        """Background task with User-Agent headers to bypass connection blocks."""
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
         while True:
             try:
-                async with websockets.connect(self.ws_url) as ws:
-                    # Authorize
+                async with websockets.connect(self.ws_url, extra_headers=headers) as ws:
                     await ws.send(json.dumps({"authorize": DERIV_TOKEN}))
-                    auth_res = await ws.recv()
+                    await ws.recv()
                     
-                    # Subscribe ticks
                     await ws.send(json.dumps({"ticks": SYMBOL, "subscribe": 1}))
                     
                     async for message in ws:
@@ -41,7 +42,7 @@ class TelegramSignalBot:
                         if data.get("msg_type") == "tick":
                             price = float(data["tick"]["quote"])
                             self.price_history.append(price)
-                            if len(self.price_history > 150):
+                            if len(self.price_history) > 150:
                                 self.price_history.pop(0)
             except Exception as e:
                 logging.error(f"Deriv WS Connection error: {e}. Reconnecting in 5s...")
@@ -49,11 +50,10 @@ class TelegramSignalBot:
 
     async def handle_signal_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Triggered instantly when user sends /signal on Telegram."""
-        user_msg = "🔍 Analyzing market data across platforms within seconds..."
-        await update.message.reply_text(user_msg)
+        await update.message.reply_text("🔍 Analyzing market data across platforms within seconds...")
 
         if len(self.price_history) < SMA_SLOW_PERIOD:
-            await update.message.reply_text("⚠️ Still collecting tick history. Please try again in a few seconds.")
+            await update.message.reply_text("⚠️ Still collecting tick history. Please try again in 5 seconds.")
             return
 
         signal, reason = TradingStrategy.evaluate_signal(
@@ -70,16 +70,15 @@ class TelegramSignalBot:
         await update.message.reply_text(response_text, parse_mode="Markdown")
 
     def run(self):
-        # Start background tick collector loop
         loop = asyncio.get_event_loop()
         loop.create_task(self.fetch_live_ticks())
 
-        # Start Telegram Bot application
+        # Build application and clear pending updates to avoid Telegram Conflict error
         app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
         app.add_handler(CommandHandler("signal", self.handle_signal_command))
         
-        logging.info("Telegram Bot is polling for /signal commands...")
-        app.run_polling()
+        logging.info("Telegram Bot is starting polling...")
+        app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     bot = TelegramSignalBot()
