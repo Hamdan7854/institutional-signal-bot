@@ -1,98 +1,40 @@
-import pandas as pd
-import numpy as np
-import config
+from market_dayallta import MarketAnalyzer
 
-class HighProbabilityStrategy:
+class TradingStrategy:
     @staticmethod
-    def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
-        df = df.copy()
-        # Ensure column name compatibility (lowercase close)
-        close_col = 'close' if 'close' in df.columns else 'Close'
-        close = df[close_col]
+    def calculate_sma(price_history, period):
+        if len(price_history) < period:
+            return None
+        return sum(price_history[-period:]) / period
 
-        # Exponential Moving Averages
-        df['ema_fast'] = close.ewm(span=config.EMA_FAST, adjust=False).mean()
-        df['ema_slow'] = close.ewm(span=config.EMA_SLOW, adjust=False).mean()
-        df['ema_trend'] = close.ewm(span=config.EMA_TREND, adjust=False).mean()
+    @classmethod
+    def evaluate_signal(cls, price_history, fast_period, slow_period):
+        """
+        Evaluates Fast and Slow SMA crossovers and integrates multi-platform confirmation.
+        """
+        if len(price_history) < slow_period + 1:
+            return "HOLD", "Insufficient price history for analysis."
 
-        # Relative Strength Index
-        delta = close.diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=config.RSI_PERIOD).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=config.RSI_PERIOD).mean()
-        rs = gain / (loss + 1e-10)
-        df['rsi'] = 100 - (100 / (1 + rs))
+        sma_fast = cls.calculate_sma(price_history, fast_period)
+        sma_slow = cls.calculate_sma(price_history, slow_period)
+        
+        prev_fast = cls.calculate_sma(price_history[:-1], fast_period)
+        prev_slow = cls.calculate_sma(price_history[:-1], slow_period)
 
-        # MACD
-        ema12 = close.ewm(span=12, adjust=False).mean()
-        ema26 = close.ewm(span=26, adjust=False).mean()
-        df['macd'] = ema12 - ema26
-        df['macd_signal'] = df['macd'].ewm(span=9, adjust=False).mean()
-        df['macd_hist'] = df['macd'] - df['macd_signal']
+        if not (sma_fast and sma_slow and prev_fast and prev_slow):
+            return "HOLD", "Calculating indicators..."
 
-        # Bollinger Bands
-        df['bb_mid'] = close.rolling(window=config.BB_PERIOD).mean()
-        std = close.rolling(window=config.BB_PERIOD).std()
-        df['bb_upper'] = df['bb_mid'] + (config.BB_STD_DEV * std)
-        df['bb_lower'] = df['bb_mid'] - (config.BB_STD_DEV * std)
+        # Multi-platform check
+        ext_trend, ext_conf = MarketAnalyzer.get_multi_platform_confirmation()
 
-        return df
+        signal = "HOLD"
+        reason = "No crossover detected."
 
-    def generate_signal(self, df: pd.DataFrame) -> dict:
-        df = self.calculate_indicators(df)
-        latest = df.iloc[-1]
-        prev = df.iloc[-2]
+        if prev_fast <= prev_slow and sma_fast > sma_slow:
+            signal = "CALL" (BUY)
+            reason = f"Bullish SMA Crossover (Fast: {sma_fast:.2f} > Slow: {sma_slow:.2f}). External Trend: {ext_trend}"
+        elif prev_fast >= prev_slow and sma_fast < sma_slow:
+            signal = "PUT" (SELL)
+            reason = f"Bearish SMA Crossover (Fast: {sma_fast:.2f} < Slow: {sma_slow:.2f}). External Trend: {ext_trend}"
 
-        signal = "NEUTRAL"
-        confidence = 0
-        reasons = []
-
-        close_col = 'close' if 'close' in df.columns else 'Close'
-        close_price = latest[close_col]
-        ema_trend = latest['ema_trend']
-        rsi = latest['rsi']
-        macd_hist = latest['macd_hist']
-        bb_upper = latest['bb_upper']
-        bb_lower = latest['bb_lower']
-
-        # Bullish Evaluation
-        is_uptrend = close_price > ema_trend
-        ema_cross_up = (prev['ema_fast'] <= prev['ema_slow']) and (latest['ema_fast'] > latest['ema_slow'])
-        rsi_bullish = config.RSI_BUY_MIN <= rsi <= config.RSI_BUY_MAX
-        macd_bullish = macd_hist > 0
-        not_overbought_bb = close_price < (bb_upper - 0.00005)
-
-        # Bearish Evaluation
-        is_downtrend = close_price < ema_trend
-        ema_cross_down = (prev['ema_fast'] >= prev['ema_slow']) and (latest['ema_fast'] < latest['ema_slow'])
-        rsi_bearish = config.RSI_SELL_MIN <= rsi <= config.RSI_SELL_MAX
-        macd_bearish = macd_hist < 0
-        not_oversold_bb = close_price > (bb_lower + 0.00005)
-
-        if is_uptrend and ema_cross_up and rsi_bullish and macd_bullish:
-            signal = "CALL"
-            confidence = 91
-            reasons = [
-                "Macro Uptrend (Price > EMA 50)",
-                "Bullish EMA 9/21 Crossover",
-                f"RSI Bullish Zone (RSI: {rsi:.1f})",
-                "MACD Acceleration Positive",
-                "Price Positioned Inside Bollinger Bands"
-            ]
-        elif is_downtrend and ema_cross_down and rsi_bearish and macd_bearish:
-            signal = "PUT"
-            confidence = 91
-            reasons = [
-                "Macro Downtrend (Price < EMA 50)",
-                "Bearish EMA 9/21 Crossover",
-                f"RSI Bearish Zone (RSI: {rsi:.1f})",
-                "MACD Acceleration Negative",
-                "Price Positioned Inside Bollinger Bands"
-            ]
-
-        return {
-            "signal": signal,
-            "confidence": confidence,
-            "price": close_price,
-            "rsi": rsi,
-            "reasons": reasons
-        }
+        return signal, reason
