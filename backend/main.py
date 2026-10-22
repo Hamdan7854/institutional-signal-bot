@@ -19,24 +19,23 @@ app_flask = Flask(__name__)
 
 @app_flask.route('/')
 def home():
-    return "Forex Signal Trading Bot is Running Live!"
+    return "Pocket Option Forex Signal Bot is Running Live!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app_flask.run(host="0.0.0.0", port=port)
 
-# Major Forex Pairs List
+# Real Forex Pairs for Pocket Option (Yahoo Finance Symbols)
 FOREX_PAIRS = {
-    "EURUSD": "frxEURUSD",
-    "GBPUSD": "frxGBPUSD",
-    "USDJPY": "frxUSDJPY",
-    "AUDUSD": "frxAUDUSD",
-    "USDCAD": "frxUSDCAD"
+    "EUR/USD": "EURUSD=X",
+    "GBP/USD": "GBPUSD=X",
+    "USD/JPY": "USDJPY=X",
+    "AUD/USD": "AUDUSD=X"
 }
 
-def fetch_deriv_ticks_http(symbol, count=30):
-    """Fetches real-time market data for Forex pairs via Deriv API."""
-    url = f"https://api.deriv.com/api/v1/ticks_history?ticks_history={symbol}&end=latest&count={count}"
+def fetch_forex_prices(symbol):
+    """Fetches real-time Forex market data via Yahoo Finance API."""
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1m&range=30m"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
@@ -44,47 +43,54 @@ def fetch_deriv_ticks_http(symbol, count=30):
         response = requests.get(url, headers=headers, timeout=5)
         if response.status_code == 200:
             data = response.json()
-            if "history" in data and "prices" in data["history"]:
-                return [float(p) for p in data["history"]["prices"]]
+            result = data["chart"]["result"][0]
+            prices = result["indicators"]["quote"][0]["close"]
+            # Filter out None values
+            valid_prices = [float(p) for p in prices if p is not None]
+            return valid_prices
     except Exception as e:
-        logging.error(f"Error fetching ticks for {symbol}: {e}")
+        logging.error(f"Error fetching forex data for {symbol}: {e}")
     
     return []
 
 async def handle_signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Generates signals for all major Real Forex Pairs with exact expiry time."""
+    """Generates signals for Pocket Option Real Forex pairs with exact expiry time."""
     try:
-        await update.message.reply_text("🔍 Scanning Real Forex Market Pairs...")
+        await update.message.reply_text("🔍 Scanning Real Forex Markets for Pocket Option...")
 
-        # Exact Expiry Calculation (5-Minute Trade Duration)
+        # 5-Minute Expiry Duration calculation
         now = datetime.now()
         expiry_time = (now + timedelta(minutes=5)).strftime("%I:%M:%S %p")
 
-        report_lines = [f"📊 **REAL FOREX MARKET SIGNALS**", f"⏰ **Expiry Time:** {expiry_time} (5 Min Duration)\n"]
+        report_lines = [
+            "📊 **POCKET OPTION FOREX SIGNALS**",
+            f"⏰ **Expiry Time:** {expiry_time} (5 Mins)\n"
+        ]
+        
         signals_found = 0
 
-        for pair_name, pair_symbol in FOREX_PAIRS.items():
-            price_history = fetch_deriv_ticks_http(pair_symbol, count=30)
+        for pair_name, symbol in FOREX_PAIRS.items():
+            prices = fetch_forex_prices(symbol)
 
-            if len(price_history) >= 20:
-                fast_sma = sum(price_history[-5:]) / 5
-                slow_sma = sum(price_history[-20:]) / 20
-                current_price = price_history[-1]
+            if len(prices) >= 15:
+                fast_sma = sum(prices[-5:]) / 5
+                slow_sma = sum(prices[-15:]) / 15
+                current_price = prices[-1]
 
                 if fast_sma > slow_sma:
-                    signal = "BUY / CALL 🟢"
+                    signal = "CALL / HIGHER 🟢"
                 else:
-                    signal = "SELL / PUT 🔴"
+                    signal = "PUT / LOWER 🔴"
 
                 report_lines.append(
                     f"💱 **{pair_name}**\n"
-                    f"💵 Price: {current_price}\n"
+                    f"💵 Price: {current_price:.5f}\n"
                     f"🎯 Signal: {signal}\n"
                 )
                 signals_found += 1
 
         if signals_found == 0:
-            await update.message.reply_text("⚠️ Real Forex Market is currently closed or data unavailable.")
+            await update.message.reply_text("⚠️ Market data temporarily unavailable. Please try again.")
             return
 
         response_text = "\n".join(report_lines)
@@ -92,10 +98,10 @@ async def handle_signal_command(update: Update, context: ContextTypes.DEFAULT_TY
 
     except Exception as e:
         logging.error(f"Error in signal command: {e}")
-        await update.message.reply_text(f"⚠️ Error scanning forex pairs: {str(e)}")
+        await update.message.reply_text(f"⚠️ Error generating signals: {str(e)}")
 
 async def handle_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Welcome! Send /signal to get real-time Real Forex Market signals with exact expiry times.")
+    await update.message.reply_text("👋 Welcome! Send /signal to get live Pocket Option Forex signals with exact expiry times.")
 
 def main():
     flask_thread = threading.Thread(target=run_flask)
@@ -108,7 +114,7 @@ def main():
     application.add_handler(CommandHandler("start", handle_start_command))
     application.add_handler(CommandHandler("signal", handle_signal_command))
 
-    logging.info("Starting Telegram bot for Forex signals...")
+    logging.info("Starting Telegram bot for Pocket Option Forex signals...")
     application.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
