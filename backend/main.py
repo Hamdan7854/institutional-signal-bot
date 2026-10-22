@@ -2,19 +2,20 @@ import os
 import logging
 import sys
 import threading
-import requests
+import asyncio
 from datetime import datetime, timedelta
 from flask import Flask
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+import requests
 
-# Import Quantitative Strategy Engine
+# Import Quantitative Trading Strategy
 from strategy import QuantitativeTradingStrategy
 
-# Configure logging
+# Configure Logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
+    format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 
@@ -28,14 +29,14 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app_flask.run(host="0.0.0.0", port=port)
 
-# All Major and Minor Real Forex Pairs for Pocket Option (Yahoo Finance Symbols)
+# 1. Complete Real Forex Pairs for Pocket Option (Yahoo Finance Symbols)
 FOREX_PAIRS = {
     "EUR/USD": "EURUSD=X",
     "GBP/USD": "GBPUSD=X",
-    "USD/JPY": "JPY=X",
+    "USD/JPY": "USDJPY=X",
     "AUD/USD": "AUDUSD=X",
-    "USD/CAD": "CAD=X",
-    "USD/CHF": "CHF=X",
+    "USD/CAD": "USDCAD=X",
+    "USD/CHF": "USDCHF=X",
     "NZD/USD": "NZDUSD=X",
     "EUR/GBP": "EURGBP=X",
     "EUR/JPY": "EURJPY=X",
@@ -53,7 +54,9 @@ FOREX_PAIRS = {
 }
 
 def fetch_forex_prices(symbol):
-    """Fetches M5 candle historical price data via Yahoo Finance API."""
+    """
+    Fetches exact 5-Minute (M5) timeframe price history via Yahoo Finance API
+    """
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=5m&range=1d"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -64,35 +67,35 @@ def fetch_forex_prices(symbol):
             data = response.json()
             result = data["chart"]["result"][0]
             prices = result["indicators"]["quote"][0]["close"]
-            # Filter out None values
+            # Filter out None values and cast to float
             valid_prices = [float(p) for p in prices if p is not None]
             return valid_prices
     except Exception as e:
         logging.error(f"Error fetching forex data for {symbol}: {e}")
-    
     return []
 
-def get_next_m5_expiry():
-    """
-    Calculates exact Next M5 Candle Expiry Time.
-    If commanded 20s before candle close, aligns perfectly with the upcoming new candle expiration.
-    """
-    now = datetime.now()
-    minutes_to_add = 5 - (now.minute % 5)
-    
-    # If exactly on the candle close moment (0 seconds left), project to full next 5 min
-    if minutes_to_add == 0 and now.second > 40:
-        minutes_to_add = 5
-        
-    next_expiry = (now + timedelta(minutes=minutes_to_add)).replace(second=0, microsecond=0)
-    return next_expiry.strftime("%I:%M:%S %p")
-
 async def handle_signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Generates signals for Pocket Option Real Forex pairs aligned with M5 Candle Close."""
+    """
+    Generates signals for Pocket Option Real Forex pairs synchronized with M5 Candle Close
+    """
     try:
-        await update.message.reply_text("🔍 Scanning Real Forex Markets for Pocket Option...")
+        now = datetime.now()
+        
+        # Calculate seconds remaining until current M5 candle closes
+        seconds_into_m5 = (now.minute % 5) * 60 + now.second
+        seconds_remaining = 300 - seconds_into_m5
 
-        expiry_time = get_next_m5_expiry()
+        # If user commands 20s before candle close, wait briefly for new candle open
+        if seconds_remaining <= 30:
+            await update.message.reply_text(f"⏳ Candle closing in {seconds_remaining}s. Synchronizing live entry price...")
+            await asyncio.sleep(seconds_remaining + 1)
+            now = datetime.now()
+
+        # Calculate exact 5-Minute Expiry Duration
+        expiry_minutes = 5 - (now.minute % 5)
+        expiry_time = (now + timedelta(minutes=expiry_minutes)).strftime("%I:%M:%S %p")
+
+        await update.message.reply_text("🔍 Scanning Real Forex Markets for Pocket Option (M5 Close Sync)...")
 
         report_lines = [
             "📊 **POCKET OPTION FOREX SIGNALS**",
@@ -104,51 +107,48 @@ async def handle_signal_command(update: Update, context: ContextTypes.DEFAULT_TY
         for pair_name, symbol in FOREX_PAIRS.items():
             prices = fetch_forex_prices(symbol)
 
-            # Ensure sufficient historical prices for M5 Analysis
             if len(prices) >= 50:
-                # Use fully closed candle history (excluding active forming tick)
-                closed_prices = prices[:-1]
-                
-                # Evaluate via 3-Tier Institutional Strategy Engine
-                signal, reason = QuantitativeTradingStrategy.evaluate_signal(closed_prices)
+                # Use strategy engine to calculate signal based on latest closed candle
+                signal, reason = QuantitativeTradingStrategy.evaluate_signal(price_history=prices)
+
+                # Ensure entry price is strictly the LIVE latest price
+                live_entry_price = prices[-1]
 
                 if signal != "HOLD":
-                    current_price = closed_prices[-1]
-                    emoji = "🔴" if "PUT" in signal else "🟢"
-                    
                     report_lines.append(
-                        f"💲 **{pair_name}**\n"
-                        f"💵 Price: {current_price:.5f}\n"
-                        f"🎯 Signal: {signal} {emoji}\n"
+                        f"💱 **{pair_name}**\n"
+                        f"💵 Price: `{live_entry_price:.5f}`\n"
+                        f"🎯 Signal: **{signal}**\n"
                     )
                     signals_found += 1
 
         if signals_found == 0:
-            await update.message.reply_text("⚠️ No high-probability signals found at candle close. Market in noise/ranging state.")
+            await update.message.reply_text("⚠️ No high-probability signals found on closed candle completion. Market is in noise phase.")
             return
 
         response_text = "\n".join(report_lines)
-        await update.message.reply_text(response_text)
+        await update.message.reply_text(response_text, parse_mode="Markdown")
 
     except Exception as e:
         logging.error(f"Error in signal command: {e}")
         await update.message.reply_text(f"⚠️ Error generating signals: {e}")
 
 async def handle_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Welcome! Send /signal to get live Pocket Option Forex signals.")
+    await update.message.reply_text("👋 Welcome! Send /signal to get live Pocket Option signals synced with M5 candle close.")
 
 def main():
+    # Run Flask in background thread for hosting health check
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
 
-    token = os.getenv("TELEGRAM_BOT_TOKEN", "8027147070:AAFey07CVktMYqH...")
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 
     application = ApplicationBuilder().token(token).build()
     application.add_handler(CommandHandler("start", handle_start_command))
     application.add_handler(CommandHandler("signal", handle_signal_command))
 
-    logging.info("Starting Telegram bot for Pocket Option Forex signals.")
+    logging.info("Starting Telegram bot for Pocket Option Forex signals...")
     application.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
