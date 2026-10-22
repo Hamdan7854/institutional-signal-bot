@@ -2,6 +2,7 @@ import os
 import logging
 import sys
 import threading
+from datetime import datetime, timedelta
 from flask import Flask
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
@@ -18,14 +19,23 @@ app_flask = Flask(__name__)
 
 @app_flask.route('/')
 def home():
-    return "Telegram Trading Bot is Running Live!"
+    return "Forex Signal Trading Bot is Running Live!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app_flask.run(host="0.0.0.0", port=port)
 
-def fetch_deriv_ticks_http(symbol="R_100", count=30):
-    """Fetches real-time price history using Deriv REST API with fallback."""
+# Major Forex Pairs List
+FOREX_PAIRS = {
+    "EURUSD": "frxEURUSD",
+    "GBPUSD": "frxGBPUSD",
+    "USDJPY": "frxUSDJPY",
+    "AUDUSD": "frxAUDUSD",
+    "USDCAD": "frxUSDCAD"
+}
+
+def fetch_deriv_ticks_http(symbol, count=30):
+    """Fetches real-time market data for Forex pairs via Deriv API."""
     url = f"https://api.deriv.com/api/v1/ticks_history?ticks_history={symbol}&end=latest&count={count}"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -37,53 +47,57 @@ def fetch_deriv_ticks_http(symbol="R_100", count=30):
             if "history" in data and "prices" in data["history"]:
                 return [float(p) for p in data["history"]["prices"]]
     except Exception as e:
-        logging.error(f"Error fetching ticks via HTTP: {e}")
+        logging.error(f"Error fetching ticks for {symbol}: {e}")
     
-    # Fallback dummy data to ensure bot never hangs
-    return [100.0 + (i * 0.05) for i in range(count)]
+    return []
 
 async def handle_signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Triggered instantly on /signal command."""
+    """Generates signals for all major Real Forex Pairs with exact expiry time."""
     try:
-        await update.message.reply_text("🔍 Analyzing Deriv R_100 market data...")
+        await update.message.reply_text("🔍 Scanning Real Forex Market Pairs...")
 
-        price_history = fetch_deriv_ticks_http("R_100", count=30)
+        # Exact Expiry Calculation (5-Minute Trade Duration)
+        now = datetime.now()
+        expiry_time = (now + timedelta(minutes=5)).strftime("%I:%M:%S %p")
 
-        if len(price_history) < 10:
-            await update.message.reply_text("⚠️ Insufficient tick history. Please try again.")
+        report_lines = [f"📊 **REAL FOREX MARKET SIGNALS**", f"⏰ **Expiry Time:** {expiry_time} (5 Min Duration)\n"]
+        signals_found = 0
+
+        for pair_name, pair_symbol in FOREX_PAIRS.items():
+            price_history = fetch_deriv_ticks_http(pair_symbol, count=30)
+
+            if len(price_history) >= 20:
+                fast_sma = sum(price_history[-5:]) / 5
+                slow_sma = sum(price_history[-20:]) / 20
+                current_price = price_history[-1]
+
+                if fast_sma > slow_sma:
+                    signal = "BUY / CALL 🟢"
+                else:
+                    signal = "SELL / PUT 🔴"
+
+                report_lines.append(
+                    f"💱 **{pair_name}**\n"
+                    f"💵 Price: {current_price}\n"
+                    f"🎯 Signal: {signal}\n"
+                )
+                signals_found += 1
+
+        if signals_found == 0:
+            await update.message.reply_text("⚠️ Real Forex Market is currently closed or data unavailable.")
             return
 
-        # SMA Strategy Logic
-        fast_sma = sum(price_history[-5:]) / 5
-        slow_sma = sum(price_history[-20:]) / 20
-
-        if fast_sma > slow_sma:
-            signal = "CALL / BUY 🟢"
-            reason = f"Fast SMA ({fast_sma:.2f}) is above Slow SMA ({slow_sma:.2f})."
-        else:
-            signal = "PUT / SELL 🔴"
-            reason = f"Fast SMA ({fast_sma:.2f}) is below Slow SMA ({slow_sma:.2f})."
-
-        current_price = price_history[-1]
-        
-        # Plain text response to avoid any Telegram Markdown crash
-        response_text = (
-            f"📊 Deriv Market Analysis (R_100)\n\n"
-            f"💵 Current Price: {current_price:.2f}\n"
-            f"🎯 Signal: {signal}\n"
-            f"📝 Reason: {reason}"
-        )
+        response_text = "\n".join(report_lines)
         await update.message.reply_text(response_text)
-        
+
     except Exception as e:
         logging.error(f"Error in signal command: {e}")
-        await update.message.reply_text(f"⚠️ Error generating signal: {str(e)}")
+        await update.message.reply_text(f"⚠️ Error scanning forex pairs: {str(e)}")
 
 async def handle_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Welcome! Send /signal to get the latest R_100 trading signal.")
+    await update.message.reply_text("👋 Welcome! Send /signal to get real-time Real Forex Market signals with exact expiry times.")
 
 def main():
-    # Start Flask web server in background
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
@@ -94,7 +108,7 @@ def main():
     application.add_handler(CommandHandler("start", handle_start_command))
     application.add_handler(CommandHandler("signal", handle_signal_command))
 
-    logging.info("Starting Telegram bot polling cleanly...")
+    logging.info("Starting Telegram bot for Forex signals...")
     application.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
