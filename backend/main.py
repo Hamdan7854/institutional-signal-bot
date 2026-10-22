@@ -2,8 +2,7 @@ import asyncio
 import logging
 import os
 import sys
-import threading
-from flask import Flask
+from flask import Flask, request
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
@@ -20,16 +19,10 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 
-# 1. Flask Web Server configured with Render's dynamic PORT
 app_flask = Flask(__name__)
 
-@app_flask.route('/')
-def home():
-    return "Telegram Trading Bot is Running Live!"
-
-def run_flask():
-    port = int(os.environ.get("PORT", 10000))
-    app_flask.run(host="0.0.0.0", port=port)
+# Global telegram application
+telegram_app = None
 
 def fetch_deriv_ticks_http(symbol, count=30):
     """Fetches real-time price history using Deriv REST API."""
@@ -71,26 +64,32 @@ async def handle_signal_command(update: Update, context: ContextTypes.DEFAULT_TY
     )
     await update.message.reply_text(response_text, parse_mode="Markdown")
 
-async def main_telegram():
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-    app.add_handler(CommandHandler("signal", handle_signal_command))
-    
-    logging.info("Telegram Signal Bot started polling...")
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling(drop_pending_updates=True)
-    
-    while True:
-        await asyncio.sleep(3600)
+async def handle_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("👋 Welcome! Send /signal to receive instant trading signals.")
 
-def main():
-    # Start Flask server in a separate background thread
-    flask_thread = threading.Thread(target=run_flask)
-    flask_thread.daemon = True
-    flask_thread.start()
+@app_flask.route('/')
+def home():
+    return "Telegram Trading Bot is Running Live!"
 
-    # Run Telegram bot loop
-    asyncio.run(main_telegram())
+# Webhook endpoint to receive Telegram updates
+@app_flask.route('/webhook', methods=['POST'])
+def webhook():
+    if request.method == "POST":
+        update_json = request.get_json(force=True)
+        update = Update.de_json(update_json, telegram_app.bot)
+        asyncio.run(telegram_app.process_update(update))
+        return "OK", 200
+    return "Invalid Method", 400
+
+def init_telegram_app():
+    global telegram_app
+    telegram_app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+    telegram_app.add_handler(CommandHandler("start", handle_start_command))
+    telegram_app.add_handler(CommandHandler("signal", handle_signal_command))
+    asyncio.run(telegram_app.initialize())
+
+init_telegram_app()
 
 if __name__ == "__main__":
-    main()
+    port = int(os.environ.get("PORT", 10000))
+    app_flask.run(host="0.0.0.0", port=port)
