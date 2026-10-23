@@ -46,7 +46,6 @@ FOREX_PAIRS = {
     "CHF/JPY": "CHFJPY=X",
     "GBP/CAD": "GBPCAD=X",
     "GBP/AUD": "GBPAUD=X",
-    "NZD/JPY": "NZDJPY=X"
 }
 
 def fetch_instant_live_data(symbol):
