@@ -33,7 +33,6 @@ class QuantitativeTradingStrategy:
         Dynamic Hurst Exponent Calculation (Regime Filter)
         Dynamic max_lag based on market volatility
         """
-        # Dynamic Lag Optimization based on volatility
         if volatility_ratio > 1.2:
             max_lag = 12  # Fast market: smaller lag
         elif volatility_ratio < 0.8:
@@ -47,7 +46,6 @@ class QuantitativeTradingStrategy:
         lags = range(2, max_lag)
         tau = [np.std(np.subtract(price_series[lag:], price_series[:-lag])) for lag in lags]
         
-        # Avoid division or log issues
         tau = np.where(np.array(tau) == 0, 1e-8, tau)
         
         poly = np.polyfit(np.log(lags), np.log(tau), 1)
@@ -73,17 +71,11 @@ class QuantitativeTradingStrategy:
 
     @classmethod
     def evaluate_tf_regime(cls, price_history, high_prices=None, low_prices=None):
-        """Single Timeframe Analysis: Returns 'BULLISH', 'BEARISH', or 'NEUTRAL'"""
+        """Single Timeframe Analysis: Returns Regime and Hurst Value"""
         prices = np.array(price_history, dtype=float)
         if len(prices) < 50:
             return "NEUTRAL", 0.5
 
-        # ATR Volatility check
-        atr_val = 0.0
-        if high_prices is not None and low_prices is not None:
-            atr_val = cls.calculate_atr(high_prices, low_prices, prices)
-        
-        # Volatility ratio for Dynamic Hurst
         std_dev = np.std(prices[-20:])
         avg_std = np.mean([np.std(prices[i-20:i]) for i in range(30, len(prices))]) if len(prices) >= 50 else std_dev
         volatility_ratio = (std_dev / avg_std) if avg_std > 0 else 1.0
@@ -92,8 +84,7 @@ class QuantitativeTradingStrategy:
         kama = cls.calculate_kama(prices)
         current_price = prices[-1]
 
-        # Check Trend Direction
-        if hurst > 0.55: # Trending Regime
+        if hurst > 0.55:
             if current_price > kama:
                 return "BULLISH", hurst
             elif current_price < kama:
@@ -102,54 +93,73 @@ class QuantitativeTradingStrategy:
         return "NEUTRAL", hurst
 
     @classmethod
-    def evaluate_signal(cls, tf_data_dict, is_high_impact_news=False, ask_bid_delta=None):
+    def evaluate_signal(cls, price_history=None, tf_data_dict=None, volume_history=None, ask_bid_delta=None, is_high_impact_news=False, **kwargs):
         """
-        Multi-Timeframe Hybrid Engine Decision Logic:
-        tf_data_dict format: 
-        {
-          '1H': {'close': [...], 'high': [...], 'low': [...]},
-          '30M': {'close': [...], 'high': [...], 'low': [...]},
-          '15M': {'close': [...], 'high': [...], 'low': [...]},
-          '5M': {'close': [...], 'high': [...], 'low': [...]}
-        }
+        Hybrid Decision Engine: Supports both Single-Timeframe and Multi-Timeframe calls seamlessly.
         """
         # 1. High Impact News Filter
         if is_high_impact_news:
             return "HOLD", "High Impact Economic News Event Detected. Signal Paused."
 
-        # 2. Multi-Timeframe Alignment Check
-        required_tfs = ['1H', '30M', '15M', '5M']
-        tf_results = {}
-        hurst_results = {}
+        # 2. Multi-Timeframe Check (If tf_data_dict is provided)
+        if tf_data_dict is not None and isinstance(tf_data_dict, dict):
+            required_tfs = ['1H', '30M', '15M', '5M']
+            tf_results = {}
+            hurst_results = {}
 
-        for tf in required_tfs:
-            if tf not in tf_data_dict or len(tf_data_dict[tf]['close']) < 50:
-                return "HOLD", f"Insufficient data for timeframe {tf}."
+            for tf in required_tfs:
+                if tf not in tf_data_dict or len(tf_data_dict[tf].get('close', [])) < 50:
+                    return "HOLD", f"Insufficient data for timeframe {tf}."
+                
+                regime, H = cls.evaluate_tf_regime(
+                    tf_data_dict[tf]['close'],
+                    tf_data_dict[tf].get('high'),
+                    tf_data_dict[tf].get('low')
+                )
+                tf_results[tf] = regime
+                hurst_results[tf] = H
+
+            all_bullish = all(status == "BULLISH" for status in tf_results.values())
+            all_bearish = all(status == "BEARISH" for status in tf_results.values())
+            ofi_delta = ask_bid_delta if ask_bid_delta is not None else 0
+
+            if all_bullish and ofi_delta >= 0:
+                h_str = ", ".join([f"{tf}:{hurst_results[tf]:.2f}" for tf in required_tfs])
+                return "CALL (BUY)", f"Strong Multi-Timeframe Bullish Alignment ({h_str})"
+            elif all_bearish and ofi_delta <= 0:
+                h_str = ", ".join([f"{tf}:{hurst_results[tf]:.2f}" for tf in required_tfs])
+                return "PUT (SELL)", f"Strong Multi-Timeframe Bearish Alignment ({h_str})"
+            else:
+                tf_summary = ", ".join([f"{tf}:{tf_results[tf]}" for tf in required_tfs])
+                return "HOLD", f"Timeframes not aligned ({tf_summary}). Waiting for confirmation."
+
+        # 3. Fallback for Single Timeframe (Backward Compatibility)
+        elif price_history is not None:
+            prices = np.array(price_history, dtype=float)
+            if len(prices) < 50:
+                return "HOLD", "Insufficient market data history."
             
-            regime, H = cls.evaluate_tf_regime(
-                tf_data_dict[tf]['close'],
-                tf_data_dict[tf].get('high'),
-                tf_data_dict[tf].get('low')
-            )
-            tf_results[tf] = regime
-            hurst_results[tf] = H
+            regime, H = cls.evaluate_tf_regime(prices)
+            kama = cls.calculate_kama(prices)
+            current_price = prices[-1]
+            ofi_delta = ask_bid_delta if ask_bid_delta is not None else 0
 
-        # Check alignment across all 4 timeframes
-        all_bullish = all(status == "BULLISH" for status in tf_results.values())
-        all_bearish = all(status == "BEARISH" for status in tf_results.values())
+            if 0.45 <= H <= 0.55:
+                return "HOLD", f"Random Walk / Noise Detected (Hurst: {H:.2f}). Trade Skipped."
 
-        # Order Flow Delta Filter
-        ofi_delta = ask_bid_delta if ask_bid_delta is not None else 0
+            if H > 0.55:
+                if current_price > kama and ofi_delta >= 0:
+                    return "CALL (BUY)", f"Bullish Trend (Hurst: {H:.2f}, KAMA: {kama:.5f})"
+                elif current_price < kama and ofi_delta <= 0:
+                    return "PUT (SELL)", f"Bearish Trend (Hurst: {H:.2f}, KAMA: {kama:.5f})"
+                else:
+                    return "HOLD", f"Trending Regime (Hurst: {H:.2f}), awaiting clean crossover."
+            else:
+                if current_price < kama and ofi_delta > 0:
+                    return "CALL (BUY)", f"Mean Reversion Reversal (Hurst: {H:.2f})"
+                elif current_price > kama and ofi_delta < 0:
+                    return "PUT (SELL)", f"Mean Reversion Reversal (Hurst: {H:.2f})"
+                else:
+                    return "HOLD", f"Ranging Market (Hurst: {H:.2f}), awaiting exhaustion."
 
-        # 3. Final Signal Decision
-        if all_bullish and ofi_delta >= 0:
-            h_str = ", ".join([f"{tf}:{hurst_results[tf]:.2f}" for tf in required_tfs])
-            return "CALL (BUY)", f"Strong Multi-Timeframe Bullish Alignment ({h_str})"
-
-        elif all_bearish and ofi_delta <= 0:
-            h_str = ", ".join([f"{tf}:{hurst_results[tf]:.2f}" for tf in required_tfs])
-            return "PUT (SELL)", f"Strong Multi-Timeframe Bearish Alignment ({h_str})"
-
-        else:
-            tf_summary = ", ".join([f"{tf}:{tf_results[tf]}" for tf in required_tfs])
-            return "HOLD", f"Timeframes not aligned ({tf_summary}). Waiting for confirmation."
+        return "HOLD", "No valid market data or configuration provided."
