@@ -8,7 +8,8 @@ class QuantitativeTradingStrategy:
     self.asset = asset
     self.payout_threshold = payout_threshold
 
-  def calculate_indicators(self, df_1m: pd.DataFrame, df_5m: pd.DataFrame):
+  @staticmethod
+  def calculate_indicators(df_1m: pd.DataFrame, df_5m: pd.DataFrame):
     """Research ke mutabiq 1-minute aur 5-minute non-repainting indicators calculate karta hai."""
     # 1-Minute Indicators (Mean-Reversion & Momentum)
     df_1m["SMA_5"] = df_1m["close"].rolling(window=5).mean()
@@ -46,11 +47,15 @@ class QuantitativeTradingStrategy:
 
     return df_1m, df_5m
 
+  @staticmethod
   def check_safety_filters(
-      self, current_payout: float, is_news_time: bool, is_session_active: bool
+      current_payout: float,
+      payout_threshold: float,
+      is_news_time: bool,
+      is_session_active: bool,
   ) -> bool:
     """Quantitative Risk Management aur Safety Gates ko enforce karta hai."""
-    if current_payout < self.payout_threshold:
+    if current_payout < payout_threshold:
       return False
     if is_news_time:
       return False
@@ -58,19 +63,25 @@ class QuantitativeTradingStrategy:
       return False
     return True
 
-  def generate_signal(
-      self,
+  @classmethod
+  def evaluate_signal(
+      cls,
       df_1m: pd.DataFrame,
       df_5m: pd.DataFrame,
-      current_payout: float,
-      is_news_time: bool,
-      is_session_active: bool,
+      current_payout: float = 0.85,
+      is_news_time: bool = False,
+      is_session_active: bool = True,
+      payout_threshold: float = 0.80,
   ):
-    """Multi-indicator confluence aur multi-timeframe filter ke base par CALL/PUT signal generate karta hai."""
-    if not self.check_safety_filters(
-        current_payout, is_news_time, is_session_active
+    """Bot script ke call ke mutabiq evaluate_signal method jo indicators aur safety filters check karta hai."""
+    if not cls.check_safety_filters(
+        current_payout, payout_threshold, is_news_time, is_session_active
     ):
       return "HOLD", "Safety Gate Blocked: Payout, News, or Session mismatch."
+
+    # Indicators calculate karein agar DataFrame mein nahi hain
+    if "BB_Upper" not in df_1m.columns or "EMA_200" not in df_5m.columns:
+      df_1m, df_5m = cls.calculate_indicators(df_1m, df_5m)
 
     row_1m = df_1m.iloc[-1]
     row_5m = df_5m.iloc[-1]
