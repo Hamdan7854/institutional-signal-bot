@@ -1,131 +1,105 @@
 import numpy as np
 import pandas as pd
-from typing import Tuple, Optional, Union, List
+from market_dayallta import MarketAnalyzer
 
 class QuantitativeTradingStrategy:
-    """
-    Hybrid Quantitative Trading Strategy Engine:
-    Combines Support & Resistance Rectangle Levels with Multi-Timeframe, 
-    RSI Momentum, ATR Volatility Guard, and Anti-Pullback Candle Filters.
-    """
 
-    @staticmethod
-    def calculate_sma(price_history: np.ndarray, period: int) -> Optional[float]:
-        """Calculates Simple Moving Average over a specified historical period."""
+@staticmethod
+    def calculate_sma(price_history, period):
+        """ Original Baseline: Simple Moving Average Calculation """
         if len(price_history) < period:
             return None
-        return float(np.mean(price_history[-period:]))
+        return sum(price_history[-period:]) / period
 
-    @staticmethod
-    def calculate_rsi(price_history: np.ndarray, period: int = 14) -> float:
-        """Calculates Relative Strength Index (RSI) for Momentum Filtering."""
-        if len(price_history) < period + 1:
-            return 50.0
-        deltas = np.diff(price_history)
-        seed = deltas[:period]
-        up = seed[seed >= 0].sum() / period
-        down = -seed[seed < 0].sum() / period
-        if down == 0:
-            return 100.0
-        rs = up / down
-        return float(100.0 - (100.0 / (1.0 + rs)))
+@staticmethod
+    def calculate_hurst_exponent(price_series, max_lag=20):
+        """ 1. Stochastic Regime Filter (Hurst Exponent) H > 0.55 -> Trending Market H < 0.45 -> Mean-Reverting / Ranging Market 0.45 <= H <= 0.55 -> Random Walk / Noise """
+        if len(price_series) < max_lag * 2:
+            return 0.5  # Neutral / Noise
+        
+        lags = range(2, max_lag)
+        tau = [np.std(np.subtract(price_series[lag:], price_series[:-lag])) for lag in lags]
+        
+        # Linear fit to calculate Hurst Exponent
+        poly = np.polyfit(np.log(lags), np.log(tau), 1)
+        return poly[0]
 
-    @staticmethod
-    def calculate_atr(high_history: np.ndarray, low_history: np.ndarray, close_history: np.ndarray, period: int = 14) -> float:
-        """Calculates Average True Range (ATR) for volatility filtering."""
-        if len(close_history) < period + 1:
-            return 0.0
-        tr1 = high_history[1:] - low_history[1:]
-        tr2 = np.abs(high_history[1:] - close_history[:-1])
-        tr3 = np.abs(low_history[1:] - close_history[:-1])
-        tr = np.maximum(tr1, np.maximum(tr2, tr3))
-        if len(tr) < period:
-            return float(np.mean(tr))
-        return float(np.mean(tr[-period:]))
+@staticmethod
+    def calculate_kama(price_series, period=10, fast=2, slow=30):
+        """ 3. Kaufman's Adaptive Moving Average (KAMA) - Fixed Array Invalidation Bug """
+        if len(price_series) < period + 1:
+            return price_series[-1]
 
-    @classmethod
-    def evaluate_signal(
-        cls,
-        price_history: Union[List, np.ndarray],
-        higher_tf_prices: Optional[Union[List, np.ndarray]] = None,
-        volume_history: Optional[Union[List, np.ndarray]] = None,
-        ask_bid_delta_history: Optional[Union[List, np.ndarray]] = None,
-        high_history: Optional[Union[List, np.ndarray]] = None,
-        low_history: Optional[Union[List, np.ndarray]] = None,
-        fast_period: int = 5,
-        slow_period: int = 20,
-        lookback_period: int = 20,
-        buffer_percent: float = 0.0005,
-        atr_threshold_multiplier: float = 1.5
-    ) -> Tuple[str, str]:
-        """
-        Evaluates signals combining S&R Rectangle ranges with trend, momentum, 
-        and anti-pullback filters.
-        """
+        change = abs(price_series[-1] - price_series[-period - 1])
+        volatility = sum(abs(price_series[i] - price_series[i - 1]) for i in range(-period, 0))
+        
+        if volatility == 0:
+            er = 0
+        else:
+            er = change / volatility # Efficiency Ratio
+            
+        sc = (er * (2 / (fast + 1) - 2 / (slow + 1)) + 2 / (slow + 1)) ** 2
+        
+        # Precise Real-time KAMA Calculation
+        kama = price_series[-period - 1] + sc * (price_series[-1] - price_series[-period - 1])
+        return kama
+
+@classmethod
+    def evaluate_signal(cls, price_history, volume_history=None, ask_bid_delta=None, fast_period=5, slow_period=20):
+        """ Hybrid Engine: Original SMA Crossover + Hurst Regime + KAMA + Order Flow Delta """
+        min_required_len = max(50, slow_period + 2)
+        if len(price_history) < min_required_len:
+            return "HOLD", "Insufficient market data history."
+
+        # Strictly enforce latest fresh price array
         prices = np.array(price_history, dtype=float)
-        prices = prices[np.isfinite(prices)]
-
-        min_required_len = max(100, slow_period + 10, lookback_period + 10)
-        if len(prices) < min_required_len:
-            return "HOLD", "Insufficient clean data history."
-
         current_price = prices[-1]
-        prev_price = prices[-2]
-        prev_prev_close = prices[-3] if len(prices) >= 3 else prev_price
 
-        # Highs and Lows arrays setup
-        highs = np.array(high_history, dtype=float) if high_history is not None else prices
-        lows = np.array(low_history, dtype=float) if low_history is not None else prices
-
-        # 1. Support & Resistance Rectangle Levels Calculation
-        recent_highs = highs[-lookback_period:-1]
-        recent_lows = lows[-lookback_period:-1]
-        resistance_level = float(np.max(recent_highs))
-        support_level = float(np.min(recent_lows))
-
-        # 2. Moving Averages & Trend Filtering
+        # --- 1. Original SMA Crossover Detection ---
         sma_fast = cls.calculate_sma(prices, fast_period)
         sma_slow = cls.calculate_sma(prices, slow_period)
+        prev_fast = cls.calculate_sma(prices[:-1], fast_period)
+        prev_slow = cls.calculate_sma(prices[:-1], slow_period)
 
-        is_macro_bullish = True
-        is_macro_bearish = True
-        if higher_tf_prices is not None and len(higher_tf_prices) >= 20:
-            htf_prices = np.array(higher_tf_prices, dtype=float)
-            htf_sma = cls.calculate_sma(htf_prices, 20)
-            if htf_sma:
-                current_htf_price = htf_prices[-1]
-                is_macro_bullish = current_htf_price > htf_sma
-                is_macro_bearish = current_htf_price < htf_sma
-        else:
-            macro_sma = cls.calculate_sma(prices, 50)
-            if macro_sma:
-                is_macro_bullish = current_price > macro_sma
-                is_macro_bearish = current_price < macro_sma
+        if not (sma_fast and sma_slow and prev_fast and prev_slow):
+            return "HOLD", "Calculating Moving Averages..."
 
-        # 3. RSI & ATR Volatility Guards
-        rsi_value = cls.calculate_rsi(prices, period=14)
-        atr_val = cls.calculate_atr(highs, lows, prices, period=14)
+        sma_bullish_cross = (prev_fast <= prev_slow) and (sma_fast > sma_slow)
+        sma_bearish_cross = (prev_fast >= prev_slow) and (sma_fast < sma_slow)
 
-        if atr_val > 0 and atr_val < (np.mean(prices) * 0.0005 * atr_threshold_multiplier):
-            return "HOLD", f"Low Volatility Guard Triggered (ATR: {atr_val:.5f})"
+        # --- 2. Advanced Quantitative Engine (Hurst & KAMA) ---
+        hurst = cls.calculate_hurst_exponent(prices)
+        kama_current = cls.calculate_kama(prices)
+        ofi_delta = ask_bid_delta if ask_bid_delta is not None else 0
 
-        # 4. Anti-Pullback Candle Check
-        is_last_candle_green = current_price > prev_price
-        is_last_candle_red = current_price < prev_price
+        # --- 3. Decision Engine Logic ---
+        signal = "HOLD"
+        reason = "No valid crossover or institutional confirmation."
 
-        # 5. Zone Proximity Check (S&R Touch)
-        near_support = abs(current_price - support_level) <= (support_level * buffer_percent) or current_price <= support_level
-        near_resistance = abs(current_price - resistance_level) <= (resistance_level * buffer_percent) or current_price >= resistance_level
+        # Random Walk / Heavy Noise Filter
+        if 0.45 <= hurst <= 0.55:
+            return "HOLD", f"Random Walk / Noise Detected (Hurst: {hurst:.2f}). Trade Skipped."
 
-        # 6. Hybrid Decision Logic
-        # BUY / CALL Signal: Near Support Rectangle OR Bullish Trend without red pullbacks
-        if near_support or (sma_fast and sma_slow and sma_fast > sma_slow):
-            if is_macro_bullish and rsi_value < 70 and is_last_candle_green:
-                return "CALL (BUY)", f"Hybrid Bullish | S&R Support Bounce | RSI: {rsi_value:.2f}"
+        # Trending Regime (Hurst > 0.55)
+        if hurst > 0.55:
+            if sma_bullish_cross or (current_price > kama_current and ofi_delta >= 0):
+                signal = "CALL (BUY)"
+                reason = f"Bullish Trend (Hurst: {hurst:.2f}, KAMA: {kama_current:.5f}) | Entry: {current_price:.5f}"
+            elif sma_bearish_cross or (current_price < kama_current and ofi_delta <= 0):
+                signal = "PUT (SELL)"
+                reason = f"Bearish Trend (Hurst: {hurst:.2f}, KAMA: {kama_current:.5f}) | Entry: {current_price:.5f}"
+            else:
+                reason = f"Trending Market (Hurst: {hurst:.2f}), awaiting clean crossover."
 
-        # SELL / PUT Signal: Near Resistance Rectangle OR Bearish Trend without green pullbacks
-        if near_resistance or (sma_fast and sma_slow and sma_fast < sma_slow):
-            if is_macro_bearish and rsi_value > 30 and is_last_candle_red:
-                return "PUT (SELL)", f"Hybrid Bearish | S&R Resistance Rejection | RSI: {rsi_value:.2f}"
+        # Mean-Reverting / Ranging Regime (Hurst < 0.45)
+        elif hurst < 0.45:
+            if current_price < kama_current and ofi_delta > 0:
+                signal = "CALL (BUY)"
+                reason = f"Mean Reversion Reversal (Hurst: {hurst:.2f}) | Entry: {current_price:.5f}"
+            elif current_price > kama_current and ofi_delta < 0:
+                signal = "PUT (SELL)"
+                reason = f"Mean Reversion Reversal (Hurst: {hurst:.2f}) | Entry: {current_price:.5f}"
+            else:
+                reason = f"Ranging Market (Hurst: {hurst:.2f}), awaiting exhaustion."
 
-        return "HOLD", f"Inside S&R Range (Supp: {support_level:.5f}, Res: {resistance_level:.5f})"
+        return signal, reason
