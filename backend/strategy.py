@@ -5,7 +5,7 @@ from typing import Tuple, Optional, Union, List
 class QuantitativeTradingStrategy:
     """
     Production-Grade Regime-Adaptive Quantitative Trading Strategy Engine 
-    with Real Multi-Timeframe Trend Confirmation, RSI Momentum, and ATR Filters.
+    with Anti-Pullback Candle Filters, RSI Momentum, and ATR Filters.
     """
 
     @staticmethod
@@ -76,7 +76,7 @@ class QuantitativeTradingStrategy:
     def evaluate_signal(
         cls,
         price_history: Union[List, np.ndarray],
-        higher_tf_prices: Optional[Union[List, np.ndarray]] = None, # Real Multi-Timeframe Data Input
+        higher_tf_prices: Optional[Union[List, np.ndarray]] = None,
         volume_history: Optional[Union[List, np.ndarray]] = None,
         ask_bid_delta_history: Optional[Union[List, np.ndarray]] = None,
         high_history: Optional[Union[List, np.ndarray]] = None,
@@ -89,7 +89,7 @@ class QuantitativeTradingStrategy:
     ) -> Tuple[str, str]:
         """
         Evaluates signals using Real Multi-Timeframe trend check, RSI Momentum, 
-        ATR Volatility Guard, and Candle Close Confirmation.
+        ATR Volatility Guard, and Anti-Pullback Candle Filters.
         """
         prices = np.array(price_history, dtype=float)
         prices = prices[np.isfinite(prices)]
@@ -99,9 +99,17 @@ class QuantitativeTradingStrategy:
             return "HOLD", "Insufficient clean data history."
 
         current_price = prices[-1]
-        prev_candle_close = prices[-2] # Candle Close Confirmation check
+        prev_close = prices[-2]
+        prev_prev_close = prices[-3] if len(prices) >= 3 else prev_close
 
-        # 1. Moving Average Calculations (Fast & Slow on Main Timeframe)
+        # Candle color check (Green = Close up, Red = Close down)
+        is_last_candle_green = current_price > prev_close
+        is_prev_candle_green = prev_close > prev_prev_close
+
+        is_last_candle_red = current_price < prev_close
+        is_prev_candle_red = prev_close < prev_prev_close
+
+        # 1. Moving Average Calculations (Fast & Slow)
         sma_fast = cls.calculate_sma(prices, fast_period)
         sma_slow = cls.calculate_sma(prices, slow_period)
         
@@ -117,7 +125,6 @@ class QuantitativeTradingStrategy:
                 is_macro_bullish = current_htf_price > htf_sma
                 is_macro_bearish = current_htf_price < htf_sma
         else:
-            # Fallback agar higher timeframe array pass na ho, toh same array par 50 SMA check karein
             macro_sma = cls.calculate_sma(prices, 50)
             if macro_sma:
                 is_macro_bullish = current_price > macro_sma
@@ -136,15 +143,21 @@ class QuantitativeTradingStrategy:
         if atr_val > 0 and atr_val < (np.mean(prices) * 0.0005 * atr_threshold_multiplier):
             return "HOLD", f"Low Volatility Guard Triggered (ATR: {atr_val:.5f})"
 
-        # 5. Decision Engine with All Filters Enforced
+        # 5. Decision Engine with Anti-Pullback Filters Enforced
         if sma_fast and sma_slow and sma_fast > sma_slow:
-            # BUY: Macro Bullish + RSI < 70 (Not overbought) + Candle Close Confirmation
-            if is_macro_bullish and rsi_value < 70 and current_price >= prev_candle_close:
-                return "CALL (BUY)", f"Multi-TF Bullish | RSI: {rsi_value:.2f} | Confirmed"
+            # BUY Condition: Macro Bullish + RSI < 70 + Check for red pullback candles
+            if is_macro_bullish and rsi_value < 70:
+                if is_last_candle_green and is_prev_candle_green:
+                    return "CALL (BUY)", f"Bullish Confirmed | No Red Pullback | RSI: {rsi_value:.2f}"
+                else:
+                    return "HOLD", "Pullback Detected (Red Candles): Skipping Buy Signal"
 
         elif sma_fast and sma_slow and sma_fast < sma_slow:
-            # SELL: Macro Bearish + RSI > 30 (Not oversold) + Candle Close Confirmation
-            if is_macro_bearish and rsi_value > 30 and current_price <= prev_candle_close:
-                return "PUT (SELL)", f"Multi-TF Bearish | RSI: {rsi_value:.2f} | Confirmed"
+            # SELL Condition: Macro Bearish + RSI > 30 + Check for green pullback candles
+            if is_macro_bearish and rsi_value > 30:
+                if is_last_candle_red and is_prev_candle_red:
+                    return "PUT (SELL)", f"Bearish Confirmed | No Green Pullback | RSI: {rsi_value:.2f}"
+                else:
+                    return "HOLD", "Pullback Detected (Green Candles): Skipping Sell Signal"
 
         return "HOLD", "No valid multi-filtered condition met."
