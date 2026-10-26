@@ -4,9 +4,9 @@ from typing import Tuple, Optional, Union, List
 
 class QuantitativeTradingStrategy:
     """
-    Hybrid Quantitative Trading Strategy Engine:
-    Combines Support & Resistance Rectangle Levels with Multi-Timeframe, 
-    RSI Momentum, ATR Volatility Guard, and Anti-Pullback Candle Filters.
+    Ultimate Hybrid Quantitative Trading Strategy Engine:
+    Integrates Hurst Exponent Regime Filter, KAMA, Support & Resistance Rectangles, 
+    RSI Momentum, ATR Volatility Guard, and Anti-Pullback Filters.
     """
 
     @staticmethod
@@ -15,6 +15,80 @@ class QuantitativeTradingStrategy:
         if len(price_history) < period:
             return None
         return float(np.mean(price_history[-period:]))
+
+    @staticmethod
+    def calculate_kama(price_series: np.ndarray, period: int = 10, fast: int = 2, slow: int = 30) -> np.ndarray:
+        """Calculates Kaufman's Adaptive Moving Average (KAMA)."""
+        prices = np.asarray(price_series, dtype=float)
+        n = len(prices)
+        if n < period + 1:
+            return prices
+
+        fast_sc = 2.0 / (fast + 1.0)
+        slow_sc = 2.0 / (slow + 1.0)
+
+        change = np.abs(prices[period:] - prices[:-period])
+        abs_diffs = np.abs(np.diff(prices))
+        volatility = np.convolve(abs_diffs, np.ones(period), mode='valid')
+
+        er = np.zeros_like(change)
+        nonzero_idxs = volatility != 0
+        er[nonzero_idxs] = change[nonzero_idxs] / volatility[nonzero_idxs]
+
+        sc = (er * (fast_sc - slow_sc) + slow_sc) ** 2
+
+        kama = np.zeros(n)
+        kama[period - 1] = np.mean(prices[:period])
+
+        for i in range(period, n):
+            kama[i] = kama[i - 1] + sc[i - period] * (prices[i] - kama[i - 1])
+
+        kama[:period - 1] = prices[:period - 1]
+        return kama
+
+    @staticmethod
+    def calculate_hurst_exponent(price_series: np.ndarray, max_lag: int = 100) -> float:
+        """Calculates Hurst Exponent using Rescaled Range (R/S) Analysis."""
+        try:
+            prices = np.asarray(price_series, dtype=float)
+            prices = prices[np.isfinite(prices)]
+            if len(prices) < max_lag:
+                max_lag = max(10, len(prices) // 4)
+            if max_lag <= 5 or len(prices) < 20:
+                return 0.5
+            
+            log_returns = np.diff(np.log(prices))
+            if len(log_returns) < max_lag:
+                return 0.5
+            
+            lags = np.arange(2, max_lag)
+            rs_values = []
+            
+            for lag in lags:
+                n_chunks = len(log_returns) // lag
+                if n_chunks == 0:
+                    continue
+                sub_chunks = log_returns[:n_chunks * lag].reshape(n_chunks, lag)
+                chunk_means = np.mean(sub_chunks, axis=1, keepdims=True)
+                cum_dev = np.cumsum(sub_chunks - chunk_means, axis=1)
+                r_range = np.max(cum_dev, axis=1) - np.min(cum_dev, axis=1)
+                t_std = np.std(sub_chunks, axis=1, ddof=1)
+                
+                valid = t_std > 1e-12
+                if not np.any(valid):
+                    continue
+                rs_val = np.mean(r_range[valid] / t_std[valid])
+                if rs_val > 0 and np.isfinite(rs_val):
+                    rs_values.append((lag, rs_val))
+                    
+            if len(rs_values) < 3:
+                return 0.5
+                
+            lags_fitted, rs_fitted = zip(*rs_values)
+            poly = np.polyfit(np.log(lags_fitted), np.log(rs_fitted), 1)
+            return float(np.clip(poly[0], 0.0, 1.0))
+        except Exception:
+            return 0.5
 
     @staticmethod
     def calculate_rsi(price_history: np.ndarray, period: int = 14) -> float:
@@ -59,8 +133,8 @@ class QuantitativeTradingStrategy:
         atr_threshold_multiplier: float = 1.5
     ) -> Tuple[str, str]:
         """
-        Evaluates signals combining S&R Rectangle ranges with trend, momentum, 
-        and anti-pullback filters.
+        Evaluates signals combining Hurst Exponent, S&R Rectangle zones, KAMA, 
+        RSI momentum, and anti-pullback filters.
         """
         prices = np.array(price_history, dtype=float)
         prices = prices[np.isfinite(prices)]
@@ -71,7 +145,6 @@ class QuantitativeTradingStrategy:
 
         current_price = prices[-1]
         prev_price = prices[-2]
-        prev_prev_close = prices[-3] if len(prices) >= 3 else prev_price
 
         # Highs and Lows arrays setup
         highs = np.array(high_history, dtype=float) if high_history is not None else prices
@@ -83,49 +156,43 @@ class QuantitativeTradingStrategy:
         resistance_level = float(np.max(recent_highs))
         support_level = float(np.min(recent_lows))
 
-        # 2. Moving Averages & Trend Filtering
+        # 2. Hurst Exponent Regime Filter Calculation
+        hurst = cls.calculate_hurst_exponent(prices, max_lag=100)
+
+        # 3. Moving Averages & KAMA Calculation
         sma_fast = cls.calculate_sma(prices, fast_period)
         sma_slow = cls.calculate_sma(prices, slow_period)
+        kama_array = cls.calculate_kama(prices, period=10)
+        kama_current = kama_array[-1] if len(kama_array) > 0 else current_price
 
-        is_macro_bullish = True
-        is_macro_bearish = True
-        if higher_tf_prices is not None and len(higher_tf_prices) >= 20:
-            htf_prices = np.array(higher_tf_prices, dtype=float)
-            htf_sma = cls.calculate_sma(htf_prices, 20)
-            if htf_sma:
-                current_htf_price = htf_prices[-1]
-                is_macro_bullish = current_htf_price > htf_sma
-                is_macro_bearish = current_htf_price < htf_sma
-        else:
-            macro_sma = cls.calculate_sma(prices, 50)
-            if macro_sma:
-                is_macro_bullish = current_price > macro_sma
-                is_macro_bearish = current_price < macro_sma
-
-        # 3. RSI & ATR Volatility Guards
+        # 4. RSI & ATR Volatility Guards
         rsi_value = cls.calculate_rsi(prices, period=14)
         atr_val = cls.calculate_atr(highs, lows, prices, period=14)
 
         if atr_val > 0 and atr_val < (np.mean(prices) * 0.0005 * atr_threshold_multiplier):
             return "HOLD", f"Low Volatility Guard Triggered (ATR: {atr_val:.5f})"
 
-        # 4. Anti-Pullback Candle Check
+        # 5. Anti-Pullback Candle Check
         is_last_candle_green = current_price > prev_price
         is_last_candle_red = current_price < prev_price
 
-        # 5. Zone Proximity Check (S&R Touch)
+        # 6. Zone Proximity Check (S&R Touch)
         near_support = abs(current_price - support_level) <= (support_level * buffer_percent) or current_price <= support_level
         near_resistance = abs(current_price - resistance_level) <= (resistance_level * buffer_percent) or current_price >= resistance_level
 
-        # 6. Hybrid Decision Logic
-        # BUY / CALL Signal: Near Support Rectangle OR Bullish Trend without red pullbacks
-        if near_support or (sma_fast and sma_slow and sma_fast > sma_slow):
-            if is_macro_bullish and rsi_value < 70 and is_last_candle_green:
-                return "CALL (BUY)", f"Hybrid Bullish | S&R Support Bounce | RSI: {rsi_value:.2f}"
+        # 7. Hybrid Decision Logic incorporating Hurst Regime Filter
+        # Agar Hurst se noisy/random market detect ho toh trade avoid karein
+        if 0.45 <= hurst <= 0.55:
+            return "HOLD", f"Random Walk / Noise Regime Detected (Hurst: {hurst:.2f})"
 
-        # SELL / PUT Signal: Near Resistance Rectangle OR Bearish Trend without green pullbacks
-        if near_resistance or (sma_fast and sma_slow and sma_fast < sma_slow):
-            if is_macro_bearish and rsi_value > 30 and is_last_candle_red:
-                return "PUT (SELL)", f"Hybrid Bearish | S&R Resistance Rejection | RSI: {rsi_value:.2f}"
+        # BUY / CALL Signal: S&R Support Bounce OR Trending Bullish Regime
+        if near_support or (hurst > 0.55 and current_price > kama_current):
+            if rsi_value < 70 and is_last_candle_green:
+                return "CALL (BUY)", f"Hybrid Bullish | Hurst: {hurst:.2f} | Support Bounce | RSI: {rsi_value:.2f}"
 
-        return "HOLD", f"Inside S&R Range (Supp: {support_level:.5f}, Res: {resistance_level:.5f})"
+        # SELL / PUT Signal: S&R Resistance Rejection OR Trending Bearish Regime
+        if near_resistance or (hurst > 0.55 and current_price < kama_current):
+            if rsi_value > 30 and is_last_candle_red:
+                return "PUT (SELL)", f"Hybrid Bearish | Hurst: {hurst:.2f} | Resistance Rejection | RSI: {rsi_value:.2f}"
+
+        return "HOLD", f"Inside S&R Range (Hurst: {hurst:.2f}, Supp: {support_level:.5f}, Res: {resistance_level:.5f})"
