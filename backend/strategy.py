@@ -5,7 +5,7 @@ from typing import Tuple, Optional, Union, List
 class QuantitativeTradingStrategy:
     """
     Production-Grade Regime-Adaptive Quantitative Trading Strategy Engine 
-    with Momentum, Volatility, and Multi-Timeframe Filters.
+    with Real Multi-Timeframe Trend Confirmation, RSI Momentum, and ATR Filters.
     """
 
     @staticmethod
@@ -76,6 +76,7 @@ class QuantitativeTradingStrategy:
     def evaluate_signal(
         cls,
         price_history: Union[List, np.ndarray],
+        higher_tf_prices: Optional[Union[List, np.ndarray]] = None, # Real Multi-Timeframe Data Input
         volume_history: Optional[Union[List, np.ndarray]] = None,
         ask_bid_delta_history: Optional[Union[List, np.ndarray]] = None,
         high_history: Optional[Union[List, np.ndarray]] = None,
@@ -84,11 +85,11 @@ class QuantitativeTradingStrategy:
         slow_period: int = 20,
         hurst_max_lag: int = 100,
         ofi_z_threshold: float = 1.0,
-        atr_threshold_multiplier: float = 1.5 # Volatility Guard threshold barhane ke liye
+        atr_threshold_multiplier: float = 1.5
     ) -> Tuple[str, str]:
         """
-        Evaluates quantitative signals incorporating Multi-Timeframe, RSI Momentum, 
-        Strict ATR Volatility Thresholds, and Candle Confirmation logic.
+        Evaluates signals using Real Multi-Timeframe trend check, RSI Momentum, 
+        ATR Volatility Guard, and Candle Close Confirmation.
         """
         prices = np.array(price_history, dtype=float)
         prices = prices[np.isfinite(prices)]
@@ -98,40 +99,52 @@ class QuantitativeTradingStrategy:
             return "HOLD", "Insufficient clean data history."
 
         current_price = prices[-1]
-        prev_candle_close = prices[-2] # Confirmation check ke liye previous candle ka close
+        prev_candle_close = prices[-2] # Candle Close Confirmation check
 
-        # 1. Moving Average Calculations (Fast & Slow)
+        # 1. Moving Average Calculations (Fast & Slow on Main Timeframe)
         sma_fast = cls.calculate_sma(prices, fast_period)
         sma_slow = cls.calculate_sma(prices, slow_period)
         
-        # Multi-Timeframe / Macro Trend Filter (e.g., 50-period SMA as higher timeframe proxy)
-        macro_sma = cls.calculate_sma(prices, 50)
-        is_macro_bullish = current_price > macro_sma if macro_sma else True
-        is_macro_bearish = current_price < macro_sma if macro_sma else True
+        # 2. Real Multi-Timeframe Trend Confirmation Check
+        is_macro_bullish = True
+        is_macro_bearish = True
 
-        # 2. RSI Momentum Filter
+        if higher_tf_prices is not None and len(higher_tf_prices) >= 20:
+            htf_prices = np.array(higher_tf_prices, dtype=float)
+            htf_sma = cls.calculate_sma(htf_prices, 20)
+            if htf_sma:
+                current_htf_price = htf_prices[-1]
+                is_macro_bullish = current_htf_price > htf_sma
+                is_macro_bearish = current_htf_price < htf_sma
+        else:
+            # Fallback agar higher timeframe array pass na ho, toh same array par 50 SMA check karein
+            macro_sma = cls.calculate_sma(prices, 50)
+            if macro_sma:
+                is_macro_bullish = current_price > macro_sma
+                is_macro_bearish = current_price < macro_sma
+
+        # 3. RSI Momentum Filter
         rsi_value = cls.calculate_rsi(prices, period=14)
 
-        # 3. Volatility Guard (ATR Threshold)
+        # 4. Volatility Guard (ATR Threshold)
         atr_val = 0.0
         if high_history is not None and low_history is not None:
             highs = np.array(high_history, dtype=float)
             lows = np.array(low_history, dtype=float)
             atr_val = cls.calculate_atr(highs, lows, prices, period=14)
         
-        # Agar market ki volatility bohat low ho (choppy/dead market), to trade skip kardein
         if atr_val > 0 and atr_val < (np.mean(prices) * 0.0005 * atr_threshold_multiplier):
             return "HOLD", f"Low Volatility Guard Triggered (ATR: {atr_val:.5f})"
 
-        # 4. Decision Engine with Filters Applied
-        # BUY Logic: Macro Trend Bullish + RSI not Overbought (< 70) + Price closing above previous confirmation
+        # 5. Decision Engine with All Filters Enforced
         if sma_fast and sma_slow and sma_fast > sma_slow:
+            # BUY: Macro Bullish + RSI < 70 (Not overbought) + Candle Close Confirmation
             if is_macro_bullish and rsi_value < 70 and current_price >= prev_candle_close:
-                return "CALL (BUY)", f"Filtered Bullish Signal | RSI: {rsi_value:.2f} | Macro Trend Confirmed"
+                return "CALL (BUY)", f"Multi-TF Bullish | RSI: {rsi_value:.2f} | Confirmed"
 
-        # SELL Logic: Macro Trend Bearish + RSI not Oversold (> 30) + Price closing below previous confirmation
         elif sma_fast and sma_slow and sma_fast < sma_slow:
+            # SELL: Macro Bearish + RSI > 30 (Not oversold) + Candle Close Confirmation
             if is_macro_bearish and rsi_value > 30 and current_price <= prev_candle_close:
-                return "PUT (SELL)", f"Filtered Bearish Signal | RSI: {rsi_value:.2f} | Macro Trend Confirmed"
+                return "PUT (SELL)", f"Multi-TF Bearish | RSI: {rsi_value:.2f} | Confirmed"
 
-        return "HOLD", "No valid filtered condition met."
+        return "HOLD", "No valid multi-filtered condition met."
