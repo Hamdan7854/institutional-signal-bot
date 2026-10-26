@@ -96,7 +96,8 @@ async def handle_signal_command(update: Update, context: ContextTypes.DEFAULT_TY
             prices = fetch_instant_live_data(symbol)
 
             if len(prices) >= 50:
-                signal, reason = QuantitativeTradingStrategy.evaluate_signal(price_history=prices)
+                # strategy ko pair_name pass kiya gaya hai taake reason mein pair show ho sake
+                signal, reason = QuantitativeTradingStrategy.evaluate_signal(price_history=prices, pair_name=pair_name)
                 live_entry_price = prices[-1]
 
                 if signal != "HOLD":
@@ -104,6 +105,7 @@ async def handle_signal_command(update: Update, context: ContextTypes.DEFAULT_TY
                         f"💱 **{pair_name}**\n"
                         f"💵 Live Price: `{live_entry_price:.5f}`\n"
                         f"🎯 Signal: **{signal}**\n"
+                        f"📝 Reason: _{reason}_\n"
                     )
                     signals_found += 1
 
