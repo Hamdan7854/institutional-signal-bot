@@ -39,7 +39,13 @@ class QuantitativeTradingStrategy:
         return float(kama)
 
     @classmethod
-    def evaluate_signal(cls, price_history, volume_history=None, ask_bid_delta=None):
+    def evaluate_signal(cls, price_history=None, volume_history=None, ask_bid_delta=None, pair_name=None, df=None, **kwargs):
+        if price_history is None and df is not None and isinstance(df, pd.DataFrame) and "close" in df.columns:
+            price_history = df["close"].values
+
+        if price_history is None or len(price_history) == 0:
+            return "HOLD", "No price history provided."
+
         min_required_len = max(50, 30 + 2)
         if len(price_history) < min_required_len:
             return "HOLD", "Insufficient market data history."
