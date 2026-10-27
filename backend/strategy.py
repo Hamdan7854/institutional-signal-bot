@@ -1,15 +1,3 @@
-"""
-Startgy.py — Classical & Quantitative Hybrid Forex Candle-by-Candle Research Framework
-Educational/backtesting use only. Not financial advice and not a live signal service.
-
-Strategy outline
-- Instrument: live Forex OHLC candles
-- Context timeframe: M5 (market structure + support/resistance zones + Wyckoff/Supply-Demand/Fibonacci)
-- Signal timeframe: M1 (closed-candle confirmation + Hurst Regime + False Breakout filters)
-- Evaluation horizon: 5 minutes (5 M1 bars after entry)
-- Signals: CALL/PUT candidates only when structure, location, rejection and quantitative filters align.
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -20,16 +8,14 @@ from typing import Optional, Union, List, Tuple
 import numpy as np
 import pandas as pd
 
-
-DEFAULT_PAYOUT = 0.80   # profit on a winning stake; change to actual offered payout
+DEFAULT_PAYOUT = 0.80  # profit on a winning stake, change to actual offered payout
 EXPIRY_MINUTES = 5
 PIP_SIZE_DEFAULT = 0.0001  # use 0.01 for most JPY pairs
 
-
 class QuantitativeTradingStrategy:
     """
-    Advanced Quantitative & Institutional Engine integrated into the Research Framework:
-    Combines Hurst Exponent, KAMA, Wyckoff, Supply/Demand, Fibonacci, and False Breakout Guards.
+    Advanced Quantitative & Institutional Engine integrated into the Research Framework.
+    Combines Hurst Exponent, KAMA, Wyckoff, Supply/Demand, Fibonacci, and False Breakout filters.
     """
 
     @staticmethod
@@ -43,9 +29,9 @@ class QuantitativeTradingStrategy:
         prices = np.asarray(price_series, dtype=float)
         prices = prices[np.isfinite(prices)]
         if len(prices) < max_lag * 2:
-            return 0.5  
+            return 0.5
         lags = range(2, max_lag)
-        tau = [np.std(np.subtract(prices[lag:], prices[:-lag])) for lag in lags]
+        tau = np.std(np.subtract(prices[lags:], prices[:-lags])) for lag in lags
         try:
             poly = np.polyfit(np.log(lags), np.log(tau), 1)
             return float(poly[0])
@@ -59,10 +45,25 @@ class QuantitativeTradingStrategy:
             return float(prices[-1])
         change = abs(prices[-1] - prices[-period - 1])
         volatility = sum(abs(prices[i] - prices[i - 1]) for i in range(-period, 0))
-        er = 0.0 if volatility == 0 else change / volatility 
+        er = 0.0 if volatility == 0 else change / volatility
         sc = (er * (2.0 / (fast + 1) - 2.0 / (slow + 1)) + 2.0 / (slow + 1)) ** 2
         return float(prices[-period - 1] + sc * (prices[-1] - prices[-period - 1]))
 
+    @classmethod
+    def evaluate_signal(cls, df: pd.DataFrame, pip_size: float = PIP_SIZE_DEFAULT, max_spread_pips: float = 2.0) -> Tuple[str, str]:
+        """
+        Wrapper method to evaluate the latest row and return signal and reason for the bot.
+        """
+        try:
+            signals_df = build_signals(df, pip_size=pip_size, max_spread_pips=max_spread_pips)
+            if signals_df.empty:
+                return "SKIP", "Empty signal dataframe"
+            latest = signals_df.iloc[-1]
+            signal = str(latest.get("signal", "SKIP"))
+            reason = str(latest.get("reason", "No reason provided"))
+            return signal, reason
+        except Exception as e:
+            return "SKIP", f"Error in evaluation: {str(e)}"
 
 def load_candles(path: str) -> pd.DataFrame:
     df = pd.read_csv(path)
@@ -73,11 +74,11 @@ def load_candles(path: str) -> pd.DataFrame:
     if missing:
         raise ValueError(
             f"CSV missing required columns: {', '.join(sorted(missing))}. "
-            "Required: timestamp, open, high, low, close"
+            f"Required: timestamp, open, high, low, close"
         )
 
     df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce", utc=True)
-    for col in ("open", "high", "low", "close"):
+    for col in ["open", "high", "low", "close"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
     df = df.dropna(subset=["timestamp", "open", "high", "low", "close"])
@@ -88,7 +89,7 @@ def load_candles(path: str) -> pd.DataFrame:
     else:
         df["high_impact_news"] = (
             df["high_impact_news"].astype(str).str.strip().str.lower()
-            .isin({"1", "true", "yes", "y"})
+            .isin(["1", "true", "yes", "y"])
         )
 
     if "spread_pips" in df.columns:
@@ -105,7 +106,6 @@ def load_candles(path: str) -> pd.DataFrame:
 
     return df
 
-
 def resample_ohlc(df: pd.DataFrame, rule: str) -> pd.DataFrame:
     x = df.set_index("timestamp")
     out = x[["open", "high", "low", "close"]].resample(
@@ -117,7 +117,6 @@ def resample_ohlc(df: pd.DataFrame, rule: str) -> pd.DataFrame:
         "close": "last",
     })
     return out.dropna().reset_index()
-
 
 def add_m5_context(m1: pd.DataFrame) -> pd.DataFrame:
     m5 = resample_ohlc(m1, "5min")
@@ -139,9 +138,10 @@ def add_m5_context(m1: pd.DataFrame) -> pd.DataFrame:
 
     m5["available_at"] = m5["timestamp"] + pd.Timedelta(minutes=5)
     m5 = m5.drop(columns=["timestamp"])
-    m1x = m1.sort_values("timestamp").copy()
+    m5 = m5.sort_values("available_at").copy()
+
     merged = pd.merge_asof(
-        m1x,
+        m1,
         m5.sort_values("available_at"),
         left_on="timestamp",
         right_on="available_at",
@@ -149,7 +149,6 @@ def add_m5_context(m1: pd.DataFrame) -> pd.DataFrame:
         allow_exact_matches=True,
     )
     return merged
-
 
 def candle_features(df: pd.DataFrame) -> pd.DataFrame:
     x = df.copy()
@@ -182,7 +181,6 @@ def candle_features(df: pd.DataFrame) -> pd.DataFrame:
     )
     return x
 
-
 def build_signals(df: pd.DataFrame, pip_size: float, max_spread_pips: float) -> pd.DataFrame:
     x = add_m5_context(df)
     x = candle_features(x)
@@ -191,15 +189,11 @@ def build_signals(df: pd.DataFrame, pip_size: float, max_spread_pips: float) -> 
     near_support = (x["close"] - x["support"]).abs() <= zone_width
     near_resistance = (x["close"] - x["resistance"]).abs() <= zone_width
 
-    # Fibonacci Golden Ratio (0.618) calculations based on M5 context spans
     m5_range_span = (x["resistance"] - x["support"]).abs().replace(0, float("nan"))
     fib_support = x["resistance"] - (m5_range_span * 0.618)
     fib_resistance = x["support"] + (m5_range_span * 0.618)
     near_fib_support = (x["close"] - fib_support).abs() <= zone_width
     near_fib_resistance = (x["close"] - fib_resistance).abs() <= zone_width
-
-    bullish_sweep = (x["low"] < x["support"]) & (x["close"] > x["support"])
-    bearish_sweep = (x["high"] > x["resistance"]) & (x["close"] < x["resistance"])
 
     bullish_confirm = x["bullish_rejection"] | x["bullish_engulfing"]
     bearish_confirm = x["bearish_rejection"] | x["bearish_engulfing"]
@@ -210,21 +204,18 @@ def build_signals(df: pd.DataFrame, pip_size: float, max_spread_pips: float) -> 
     x["signal"] = "SKIP"
     x["reason"] = "No complete setup"
 
-    # Compute rolling price series for Hurst Exponent & KAMA evaluation per row safely
-    # (using rolling historical windows for advanced quantitative checks)
     prices_list = x["close"].values
-    
+
     for i in range(50, len(x)):
-        hist_slice = prices_list[max(0, i-100):i+1]
+        hist_slice = prices_list[max(0, i - 100):i + 1]
         hurst = QuantitativeTradingStrategy.calculate_hurst_exponent(hist_slice)
         kama = QuantitativeTradingStrategy.calculate_kama(hist_slice)
-        
+
         row_close = x.at[i, "close"]
-        row_prev_close = x.at[i-1, "close"] if i > 0 else row_close
-        
-        # False breakout & body strength filter
+        row_prev_close = x.at[i - 1, "close"] if i > 0 else row_close
+
         body_size = abs(row_close - row_prev_close)
-        is_strong_body = body_size >= (0.0002) # minimum volatility threshold guard
+        is_strong_body = body_size >= 0.0002
 
         is_spread_valid = spread_ok.iloc[i]
         is_news_clean = no_news.iloc[i]
@@ -234,28 +225,24 @@ def build_signals(df: pd.DataFrame, pip_size: float, max_spread_pips: float) -> 
             x.at[i, "reason"] = "Spread or News Filter"
             continue
 
-        # Noise / Random Walk Filter (0.45 <= Hurst <= 0.55)
         if 0.45 <= hurst <= 0.55:
             x.at[i, "signal"] = "SKIP"
             x.at[i, "reason"] = f"Noise Filter (Hurst: {hurst:.2f})"
             continue
 
-        # Trending Regime (Hurst > 0.55) -> Trend Following / Breakouts
         if hurst > 0.55:
-            if x.at[i, "trend"] == "bullish" and row_close > kama and (bullish_confirm.iloc[i] or bullish_sweep.iloc[i]) and is_strong_body:
+            if x.at[i, "trend"] == "bullish" and row_close > kama and (bullish_confirm.iloc[i] and is_strong_body):
                 x.at[i, "signal"] = "CALL"
                 x.at[i, "reason"] = f"Verified Trend Breakout (Hurst: {hurst:.2f})"
-            elif x.at[i, "trend"] == "bearish" and row_close < kama and (bearish_confirm.iloc[i] or bearish_sweep.iloc[i]) and is_strong_body:
+            elif x.at[i, "trend"] == "bearish" and row_close < kama and (bearish_confirm.iloc[i] and is_strong_body):
                 x.at[i, "signal"] = "PUT"
                 x.at[i, "reason"] = f"Verified Trend Breakdown (Hurst: {hurst:.2f})"
             else:
                 x.at[i, "signal"] = "SKIP"
-                x.at[i, "reason"] = f"Trending Market (Hurst: {hurst:.2f}), awaiting clean trigger."
-
-        # Ranging / Reversal Regime (Hurst < 0.45) -> Wyckoff, Supply/Demand, Fib & S&R Bounce
+                x.at[i, "reason"] = f"Trending Market (Hurst: {hurst:.2f}), awaiting criteria"
         elif hurst < 0.45:
-            at_support_zone = near_support.iloc[i] or near_fib_support.iloc[i] or bullish_sweep.iloc[i]
-            at_resistance_zone = near_resistance.iloc[i] or near_fib_resistance.iloc[i] or bearish_sweep.iloc[i]
+            at_support_zone = near_support.iloc[i] or near_fib_support.iloc[i]
+            at_resistance_zone = near_resistance.iloc[i] or near_fib_resistance.iloc[i]
 
             if at_support_zone and bullish_confirm.iloc[i] and is_strong_body:
                 x.at[i, "signal"] = "CALL"
@@ -268,7 +255,6 @@ def build_signals(df: pd.DataFrame, pip_size: float, max_spread_pips: float) -> 
                 x.at[i, "reason"] = f"Ranging Zone, awaiting confirmation (Hurst: {hurst:.2f})"
 
     return x
-
 
 def evaluate_expiry(signals: pd.DataFrame, payout: float, expiry_minutes: int) -> pd.DataFrame:
     x = signals.copy()
@@ -293,23 +279,21 @@ def evaluate_expiry(signals: pd.DataFrame, payout: float, expiry_minutes: int) -
     x.loc[eligible & x["expiry_close"].isna(), "outcome"] = "INSUFFICIENT_FUTURE_DATA"
     return x
 
-
 def max_consecutive_losses(outcomes: pd.Series) -> int:
     best = current = 0
     for outcome in outcomes:
         if outcome == "LOSS":
             current += 1
             best = max(best, current)
-        elif outcome in {"WIN", "TIE"}:
+        elif outcome in ["WIN", "TIE"]:
             current = 0
     return best
-
 
 def print_report(results: pd.DataFrame, payout: float) -> None:
     valid = results[results["outcome"].isin(["WIN", "LOSS", "TIE"])].copy()
     n = len(valid)
     if n == 0:
-        print("No evaluable signals. Check data length and whether rules produced signals.")
+        print("No evaluable signals. Check data length and whether rules produced setups.")
         return
 
     wins = int((valid["outcome"] == "WIN").sum())
@@ -322,24 +306,23 @@ def print_report(results: pd.DataFrame, payout: float) -> None:
     expectancy = total_net / n
 
     print("\n=== BACKTEST SUMMARY (Quantitative Hybrid Strategy) ===")
-    print(f"Evaluated trades : {n}")
+    print(f"Evaluated trades: {n}")
     print(f"Wins / Losses / Ties: {wins} / {losses} / {ties}")
     print(f"Win rate (excluding ties): {win_rate:.2f}%")
-    print(f"Break-even win rate at payout {payout:.2f}: {breakeven:.2f}%")
+    print(f"Break-even win rate at payout (payout: {payout}): {breakeven:.2f}%")
     print(f"Net result (1 unit stake): {total_net:.2f} units")
     print(f"Expectancy per evaluated trade: {expectancy:.4f} units")
     print(f"Max consecutive losses: {max_consecutive_losses(valid['outcome'])}")
     print("\nFramework successfully merged with Hurst Exponent, Wyckoff, and False Breakout filters.")
 
-
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Classical & Quantitative Hybrid Forex Research Framework")
-    parser.add_argument("csv", help="Path to M1 OHLC CSV file")
-    parser.add_argument("--output", default="Startgy_results.csv", help="Output CSV path")
-    parser.add_argument("--payout", type=float, default=DEFAULT_PAYOUT, help="Net profit payout on winning stake, e.g. 0.80")
-    parser.add_argument("--expiry", type=int, default=EXPIRY_MINUTES, help="Expiry in minutes (default: 5)")
-    parser.add_argument("--pip-size", type=float, default=PIP_SIZE_DEFAULT, help="Pip size: 0.0001 most pairs; 0.01 most JPY pairs")
-    parser.add_argument("--max-spread", type=float, default=2.0, help="Maximum spread in pips if spread_pips column exists")
+    parser = argparse.ArgumentParser(description="Classical & Quantitative Hybrid Forex Candle-by-Candle Research Framework")
+    parser.add_argument("--csv", help="Path to M1 OHLC CSV file")
+    parser.add_argument("--output", default="Startgy_results.csv", help="Output CSV results path")
+    parser.add_argument("--payout", type=float, default=DEFAULT_PAYOUT, help="Broker payout (e.g. 0.80)")
+    parser.add_argument("--expiry", type=int, default=EXPIRY_MINUTES, help="Expiry minutes")
+    parser.add_argument("--pip-size", type=float, default=PIP_SIZE_DEFAULT, help="Pip size")
+    parser.add_argument("--max-spread", type=float, default=2.0, help="Maximum spread in pips")
     args = parser.parse_args()
 
     if args.payout <= 0:
@@ -355,7 +338,6 @@ def main() -> None:
     print_report(results, args.payout)
     print(f"\nDetailed candle-by-candle results saved to: {Path(args.output).resolve()}")
     print("\nSignals are research candidates only. No trades are placed.")
-
 
 if __name__ == "__main__":
     main()
