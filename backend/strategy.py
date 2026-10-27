@@ -31,7 +31,7 @@ class QuantitativeTradingStrategy:
         if len(prices) < max_lag * 2:
             return 0.5
         lags = range(2, max_lag)
-        tau = np.std(np.subtract(prices[lags:], prices[:-lags])) for lag in lags
+        tau = [np.std(np.subtract(prices[lag:], prices[:-lag])) for lag in lags]
         try:
             poly = np.polyfit(np.log(lags), np.log(tau), 1)
             return float(poly[0])
