@@ -1,4 +1,3 @@
-""" Adaptive binary-options signal research engine. IMPORTANT: - This is a research/demo signal engine, not a profitability guarantee. - It does not place trades. - Suggested expiries are heuristic candidates, not statistically proven optimal horizons. - Use completed candles and validate with out-of-sample backtests before live use. """
 from __future__ import annotations
 
 import numpy as np
@@ -8,19 +7,19 @@ import pandas as pd
 class QuantitativeTradingStrategy:
     EXPIRY_CANDIDATES = (1, 2, 3, 4, 5, 10, 15, 30, 60)
 
-@staticmethod
+    @staticmethod
     def _clean_prices(price_history):
         prices = np.asarray(price_history, dtype=float).reshape(-1)
         return prices[np.isfinite(prices)]
 
-@staticmethod
+    @staticmethod
     def calculate_sma(price_history, period):
         prices = QuantitativeTradingStrategy._clean_prices(price_history)
         if period <= 0 or len(prices) < period:
             return None
         return float(np.mean(prices[-period:]))
 
-@staticmethod
+    @staticmethod
     def calculate_hurst_exponent(price_series, max_lag=20):
         """Rough R/S-like scaling proxy; noisy on short financial series."""
         prices = QuantitativeTradingStrategy._clean_prices(price_series)
@@ -45,7 +44,7 @@ class QuantitativeTradingStrategy:
         except (ValueError, FloatingPointError, np.linalg.LinAlgError):
             return 0.5
 
-@staticmethod
+    @staticmethod
     def calculate_kama(price_series, period=10, fast=2, slow=30):
         """Return the latest point of a recursively calculated KAMA series."""
         prices = QuantitativeTradingStrategy._clean_prices(price_series)
@@ -69,7 +68,7 @@ class QuantitativeTradingStrategy:
         valid = kama[np.isfinite(kama)]
         return float(valid[-1]) if len(valid) else float(prices[-1])
 
-@staticmethod
+    @staticmethod
     def _normalise_frame(df):
         if not isinstance(df, pd.DataFrame) or df.empty:
             return None
@@ -95,7 +94,7 @@ class QuantitativeTradingStrategy:
             return None
         return frame
 
-@staticmethod
+    @staticmethod
     def _atr(frame, period=14):
         if not all(c in frame.columns for c in ("high", "low", "close")):
             return None
@@ -110,7 +109,7 @@ class QuantitativeTradingStrategy:
         value = tr.rolling(period).mean().iloc[-1]
         return float(value) if pd.notna(value) and value > 0 else None
 
-@classmethod
+    @classmethod
     def _range_rejection(cls, frame, lookback=20):
         """Return (direction, explanation) for a confirmed edge rejection."""
         if not all(c in frame.columns for c in ("open", "high", "low", "close")):
@@ -142,7 +141,7 @@ class QuantitativeTradingStrategy:
             return "PUT (SELL)", f"Range resistance rejection (resistance {resistance:.5f})"
         return None, None
 
-@classmethod
+    @classmethod
     def _false_breakout(cls, frame, lookback=20):
         if not all(c in frame.columns for c in ("open", "high", "low", "close")) or len(frame) < lookback + 2:
             return None, None
@@ -160,7 +159,7 @@ class QuantitativeTradingStrategy:
             return "PUT (SELL)", f"Bull-trap / false breakout rejected near {resistance:.5f}"
         return None, None
 
-@classmethod
+    @classmethod
     def _trend_signal(cls, prices, hurst, kama):
         if len(prices) < 35 or kama is None:
             return None, None
@@ -183,7 +182,7 @@ class QuantitativeTradingStrategy:
             return "PUT (SELL)", "Bearish SMA crossover confirmed below KAMA"
         return None, None
 
-@classmethod
+    @classmethod
     def _select_expiry(cls, frame, direction):
         """ Heuristic expiry selector. It scores available horizons using directional persistence and volatility. This is not a trained probability model. """
         close = frame["close"].astype(float).to_numpy()
@@ -218,7 +217,7 @@ class QuantitativeTradingStrategy:
             return None, "No expiry horizon aligns with the signal"
         return int(best_horizon), "Heuristic horizon ranking; must be validated by backtesting"
 
-@classmethod
+    @classmethod
     def evaluate_signal( cls, price_history=None, volume_history=None, ask_bid_delta=None, pair_name=None, df=None, **kwargs, ):
         """ Backwards-compatible return: (signal, reason). signal is CALL (BUY), PUT (SELL), or HOLD. If df contains OHLC, use it for rectangle/rejection checks. """
         frame = cls._normalise_frame(df) if df is not None else None
