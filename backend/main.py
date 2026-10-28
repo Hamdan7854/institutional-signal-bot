@@ -1,141 +1,182 @@
-import os
+""" Telegram signal bot for research/demo use. Set TELEGRAM_BOT_TOKEN in Render Environment Variables. Yahoo Finance data is not guaranteed to match Pocket Option's feed. This bot generates research signals only and does not place trades. """
 import logging
+import os
+import re
 import sys
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
+
 from flask import Flask
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-import requests
 
+from market_dayallta import MarketAnalyzer
 from strategy import QuantitativeTradingStrategy
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
+logger = logging.getLogger(__name__)
 
 app_flask = Flask(__name__)
 
-@app_flask.route('/')
+
+@app_flask.route("/")
 def home():
-    return "Pocket Option Forex Signal Bot is Running Live!"
+    return "Pocket Option Forex Signal Bot is running. Research/demo signals only."
+
 
 def run_flask():
-    port = int(os.environ.get("PORT", 10000))
-    app_flask.run(host="0.0.0.0", port=port)
+    port = int(os.environ.get("PORT", "10000"))
+    app_flask.run(host="0.0.0.0", port=port, use_reloader=False)
 
-FOREX_PAIRS = {
-    "EUR/USD": "EURUSD=X",
-    "GBP/USD": "GBPUSD=X",
-    "USD/JPY": "USDJPY=X",
-    "AUD/USD": "AUDUSD=X",
-    "USD/CAD": "USDCAD=X",
-    "USD/CHF": "USDCHF=X",
-    "NZD/USD": "NZDUSD=X",
-    "EUR/GBP": "EURGBP=X",
-    "EUR/JPY": "EURJPY=X",
-    "GBP/JPY": "GBPJPY=X",
-    "AUD/JPY": "AUDJPY=X",
-    "EUR/AUD": "EURAUD=X",
-    "EUR/CAD": "EURCAD=X",
-    "GBP/CHF": "GBPCHF=X",
-    "AUD/CAD": "AUDCAD=X",
-    "CAD/JPY": "CADJPY=X",
-    "CHF/JPY": "CHFJPY=X",
-    "GBP/CAD": "GBPCAD=X",
-    "GBP/AUD": "GBPAUD=X",
-}
 
-def fetch_instant_live_data(symbol):
-    """
-    Fetches the absolute latest available market price instantly.
-    """
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=5m&range=1d"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    }
+# Use Yahoo Finance-compatible pair names through MarketAnalyzer.
+FOREX_PAIRS = [
+    "EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD",
+    "USD/CHF", "NZD/USD", "EUR/GBP", "EUR/JPY", "GBP/JPY",
+    "AUD/JPY", "EUR/AUD", "EUR/CAD", "GBP/CHF", "AUD/CAD",
+    "CAD/JPY", "CHF/JPY", "GBP/CAD", "GBP/AUD",
+]
+
+
+def get_recommended_expiry(reason: str):
+    """Extract the strategy's suggested expiry without changing its old API."""
+    match = re.search(r"Suggested expiry=(\d+)\s+minute", reason or "", flags=re.I)
+    return int(match.group(1)) if match else None
+
+
+def fetch_pair_candles(pair_name: str):
+    """ Get 1-minute OHLC candles. The strategy needs OHLC, not just close prices, for price-action patterns and its heuristic expiry selector. """
     try:
-        response = requests.get(url, headers=headers, timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            result = data["chart"]["result"][0]
-            
-            # Get latest live market price from meta or quote
-            meta_price = result["meta"].get("regularMarketPrice")
-            prices = result["indicators"]["quote"][0]["close"]
-            valid_prices = [float(p) for p in prices if p is not None]
-            
-            if meta_price is not None and valid_prices:
-                valid_prices[-1] = float(meta_price)
-            
-            return valid_prices
-    except Exception as e:
-        logging.error(f"Error fetching instant data for {symbol}: {e}")
-    return []
+        frame = MarketAnalyzer.get_market_data(
+            symbol=pair_name,
+            period="1d",
+            interval="1m",
+            drop_latest_candle=True,  # avoid acting on an incomplete candle
+        )
+        if frame is None or frame.empty or len(frame) < 65:
+            logger.warning("Insufficient 1m OHLC candles for %s", pair_name)
+            return None
+        required = {"open", "high", "low", "close"}
+        if not required.issubset(set(frame.columns)):
+            logger.warning("OHLC columns missing for %s", pair_name)
+            return None
+        return frame
+    except Exception:
+        logger.exception("Failed to fetch candles for %s", pair_name)
+        return None
+
 
 async def handle_signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Fires signals INSTANTLY without any delay or waiting upon command.
-    """
+    if update.message is None:
+        return
+
+    status_message = await update.message.reply_text(
+        "⚡ Scanning available 1-minute candles and checking setups..."
+    )
+
     try:
-        await update.message.reply_text("⚡ Scanning live markets instantly...")
-        
-        now = datetime.now()
-        expiry_time = (now + timedelta(minutes=5)).strftime("%I:%M:%S %p")
-
         report_lines = [
-            "📊 **POCKET OPTION FOREX SIGNALS**",
-            f"⏰ **Expiry Time:** {expiry_time} (5 Mins)\n"
+            "📊 POCKET OPTION FOREX SIGNALS",
+            f"🕒 Scan time (UTC): {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}",
+            "ℹ️ Data: Yahoo Finance; broker-feed match is not guaranteed.",
+            "",
         ]
-
         signals_found = 0
+        pairs_with_data = 0
 
-        for pair_name, symbol in FOREX_PAIRS.items():
-            prices = fetch_instant_live_data(symbol)
+        for pair_name in FOREX_PAIRS:
+            frame = fetch_pair_candles(pair_name)
+            if frame is None:
+                continue
+            pairs_with_data += 1
 
-            if len(prices) >= 50:
-                # strategy ko pair_name pass kiya gaya hai taake reason mein pair show ho sake
-                signal, reason = QuantitativeTradingStrategy.evaluate_signal(price_history=prices, pair_name=pair_name)
-                live_entry_price = prices[-1]
+            signal, reason = QuantitativeTradingStrategy.evaluate_signal(
+                df=frame,
+                price_history=frame["close"].to_numpy(),
+                pair_name=pair_name,
+            )
 
-                if signal != "HOLD":
-                    report_lines.append(
-                        f"💱 **{pair_name}**\n"
-                        f"💵 Live Price: `{live_entry_price:.5f}`\n"
-                        f"🎯 Signal: **{signal}**\n"
-                        f"📝 Reason: _{reason}_\n"
-                    )
-                    signals_found += 1
+            live_entry_price = float(frame["close"].iloc[-1])
+            expiry = get_recommended_expiry(reason)
+
+            if signal not in ("CALL (BUY)", "PUT (SELL)") or expiry is None:
+                logger.info("%s skipped: %s | %s", pair_name, signal, reason)
+                continue
+
+            # Yahoo quotes can be delayed or differ from the broker quote.
+            report_lines.extend([
+                f"💱 {pair_name}",
+                f"💵 Latest completed candle close: {live_entry_price:.5f}",
+                f"🎯 Signal: {signal}",
+                f"⏳ Suggested expiry: {expiry} minute(s)",
+                f"📝 Reason: {reason}",
+                "",
+            ])
+            signals_found += 1
 
         if signals_found == 0:
-            await update.message.reply_text("⚠️ No high-probability setup found at this exact moment. Try again in a minute.")
+            if pairs_with_data == 0:
+                message = (
+                    "⚠️ No usable market data returned. Yahoo Finance may be "
+                    "unavailable, rate-limited, or missing recent 1-minute candles."
+                )
+            else:
+                message = (
+                    "⚠️ No validated setup with an expiry recommendation found. "
+                    "This is a valid NO TRADE result; try again after a completed candle."
+                )
+            await status_message.edit_text(message)
             return
 
+        report_lines.append(
+            "⚠️ Research/demo output only. Suggested expiry is heuristic, not a "
+            "validated probability or guarantee. Confirm price and expiry on your broker."
+        )
         response_text = "\n".join(report_lines)
-        await update.message.reply_text(response_text, parse_mode="Markdown")
 
-    except Exception as ec:
-        logging.error(f"Error in signal command: {ec}")
-        await update.message.reply_text(f"⚠️ Error generating signals: {ec}")
+        # Telegram message length is limited; send in chunks if needed.
+        await status_message.edit_text(response_text[:3900])
+        if len(response_text) > 3900:
+            await update.message.reply_text(response_text[3900:7800])
+
+    except Exception as exc:
+        logger.exception("Error in /signal handler")
+        await status_message.edit_text(
+            f"⚠️ Signal scan failed: {type(exc).__name__}. Check Render logs."
+        )
+
 
 async def handle_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Welcome! Send /signal for instant live market signals.")
+    if update.message is not None:
+        await update.message.reply_text(
+            "👋 Welcome!\n"
+            "Send /signal to scan forex pairs.\n\n"
+            "Signals are for research/demo use only. No accuracy or profit is guaranteed."
+        )
+
 
 def main():
-    flask_thread = threading.Thread(target=run_flask)
-    flask_thread.daemon = True
+    # Render web service health endpoint.
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
 
-    token = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not token:
+        raise RuntimeError(
+            "Missing TELEGRAM_BOT_TOKEN. Add it under Render > Environment."
+        )
 
     application = ApplicationBuilder().token(token).build()
     application.add_handler(CommandHandler("start", handle_start_command))
     application.add_handler(CommandHandler("signal", handle_signal_command))
 
-    logging.info("Starting Instant Telegram Signal Bot...")
+    logger.info("Starting Telegram signal bot...")
     application.run_polling(drop_pending_updates=True)
+
 
 if __name__ == "__main__":
     main()
