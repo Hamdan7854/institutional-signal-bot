@@ -1,10 +1,9 @@
 """ Market data adapter for the strategy engine. Uses Yahoo Finance via yfinance as a research/demo source. It is not guaranteed to match Pocket Option's quote feed, and should not be described as exchange- verified real-time pricing. For live trading decisions, compare timestamps and quotes against the broker feed and use completed candles. """
-from __future__ import annotations
 
+from __future__ import annotations
 import logging
 import re
 from typing import Optional
-
 import pandas as pd
 import yfinance as yf
 
@@ -38,7 +37,7 @@ class MarketAnalyzer:
     INTERVALS = {"1m", "2m", "5m", "15m", "30m", "60m", "1h", "1d"}
     PERIODS = {"1d", "5d", "1mo", "3mo", "6mo", "1y"}
 
-@classmethod
+    @classmethod
     def normalise_symbol(cls, symbol: str) -> str:
         raw = str(symbol or "").strip().upper().replace(" ", "")
         if raw in cls.FOREX_SYMBOLS:
@@ -47,8 +46,14 @@ class MarketAnalyzer:
             return cls.FOREX_SYMBOLS.get(raw, raw + "=X")
         return raw or "EURUSD=X"
 
-@classmethod
-    def get_market_data( cls, symbol="EUR/USD", period="5d", interval="1m", drop_latest_candle=True, ) -> pd.DataFrame:
+    @classmethod
+    def get_market_data(
+        cls,
+        symbol="EUR/USD",
+        period="5d",
+        interval="1m",
+        drop_latest_candle=True,
+    ) -> pd.DataFrame:
         """Fetch OHLCV history. By default drops latest potentially incomplete candle."""
         if interval not in cls.INTERVALS:
             raise ValueError(f"Unsupported interval {interval!r}. Choose from {sorted(cls.INTERVALS)}")
@@ -87,7 +92,7 @@ class MarketAnalyzer:
             logger.exception("Market data fetch failed for %s: %s", ticker_symbol, exc)
             return pd.DataFrame()
 
-@classmethod
+    @classmethod
     def get_multi_platform_confirmation(cls, symbol="EUR/USD", interval="1h"):
         """ Backwards-compatible direction check. The returned percentage is the absolute change between the last two available closes, not a probability. """
         hist = cls.get_market_data(
@@ -108,7 +113,7 @@ class MarketAnalyzer:
         change_pct = abs(diff) / abs(previous) * 100.0
         return trend, round(change_pct, 5)
 
-@classmethod
+    @classmethod
     def get_latest_price(cls, symbol="EUR/USD", interval="1m") -> Optional[float]:
         hist = cls.get_market_data(
             symbol=symbol,
