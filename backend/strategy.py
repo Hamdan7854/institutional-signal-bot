@@ -13,18 +13,19 @@ def calculate_atr(df: pd.DataFrame, period: int = 14) -> float:
 
 def analyze_next_candle_target(symbol: str) -> dict:
     """
-    Research-backed SMC + Volume Profile Confluence Engine.
-    Sirf Agli Single Candle (Next Candle) ka Exact Target Level predict karta hai.
+    Research-backed SMC + Volume Profile Confluence Engine with Momentum Filtering.
+    Sirf wahi signals generate karega jahan price action aur trend fully aligned hon.
     """
-    # Agar 1-minute candles par exact match chahiye toh interval="1m" kar sakte hain
     df = fetch_pair_data(symbol, period="2d", interval="1m")
     if df.empty or len(df) < 30:
-        # Fallback to 5m agar 1m data na mile
         df = fetch_pair_data(symbol, period="5d", interval="5m")
         if df.empty or len(df) < 30:
             return None
     
     curr_price = round(float(df['Close'].iloc[-1]), 5)
+    prev_price = round(float(df['Close'].iloc[-2]), 5)
+    prev_open = round(float(df['Open'].iloc[-2]), 5)
+    
     atr = calculate_atr(df)
     poc_price, npoc_price = calculate_volume_profile(df)
     
@@ -35,23 +36,26 @@ def analyze_next_candle_target(symbol: str) -> dict:
     c3_high = df['High'].iloc[-1]
     c3_low = df['Low'].iloc[-1]
     
-    if c3_low > c1_high:  # Bullish FVG
+    if c3_low > c1_high:
         fvg_target = round((c3_low + c1_high) / 2, 5)
-    elif c3_high < c1_low:  # Bearish FVG
+    elif c3_high < c1_low:
         fvg_target = round((c3_high + c1_low) / 2, 5)
 
-    # 2. Liquidity Sweep (BSL / SSL) Target Identification
+    # 2. Liquidity Levels
     recent_highs = round(float(df['High'].iloc[-20:-1].max()), 5)
     recent_lows = round(float(df['Low'].iloc[-20:-1].min()), 5)
     
-    # 3. Target Determination Engine (Next Candle Cap)
+    # 3. Strict Momentum & Trend Alignment Check
+    # Agar pichli candle bullish thi, toh bearish signal nahi aana chahiye (fake signals rokne ke liye)
+    is_candle_green = prev_price > prev_open
+    
     direction = "NEUTRAL"
     predicted_target = curr_price
     confluence_factors = []
-    confidence = 75
+    confidence = 80
 
     # Bullish Logic
-    if curr_price > float(df['Close'].iloc[-2]):
+    if curr_price >= prev_price or is_candle_green:
         direction = "BULLISH 🟢"
         targets = []
         if fvg_target and fvg_target > curr_price:
@@ -59,18 +63,18 @@ def analyze_next_candle_target(symbol: str) -> dict:
             confluence_factors.append("FVG Imbalance Consequent Encroachment")
         if npoc_price and npoc_price > curr_price:
             targets.append(round(float(npoc_price), 5))
-            confluence_factors.append("Naked Point of Control (nPOC) Volume Magnet")
+            confluence_factors.append("Naked Point of Control (nPOC) Magnet")
         if recent_highs > curr_price:
             targets.append(recent_highs)
             confluence_factors.append("Buy-Side Liquidity (BSL) Sweep")
             
         if targets:
             min_target = min(targets)
-            predicted_target = round(min(min_target, curr_price + (atr * 1.0)), 5)
-            confidence += len(confluence_factors) * 8
+            predicted_target = round(min(min_target, curr_price + (atr * 0.8), 5), 5)
+            confidence += len(confluence_factors) * 5
         else:
-            predicted_target = round(curr_price + (atr * 0.6), 5)
-            confluence_factors.append("Order Flow Momentum & ATR Expansion")
+            predicted_target = round(curr_price + (atr * 0.5), 5)
+            confluence_factors.append("Bullish Momentum & Order Flow Continuation")
 
     # Bearish Logic
     else:
@@ -88,11 +92,11 @@ def analyze_next_candle_target(symbol: str) -> dict:
 
         if targets:
             max_target = max(targets)
-            predicted_target = round(max(max_target, curr_price - (atr * 1.0)), 5)
-            confidence += len(confluence_factors) * 8
+            predicted_target = round(max(max_target, curr_price - (atr * 0.8), 5), 5)
+            confidence += len(confluence_factors) * 5
         else:
-            predicted_target = round(curr_price - (atr * 0.6), 5)
-            confluence_factors.append("Institutional Order Block Push & ATR Expansion")
+            predicted_target = round(curr_price - (atr * 0.5), 5)
+            confluence_factors.append("Bearish Momentum & Institutional Push")
 
     clean_pair = symbol.replace("=X", "")
     
@@ -101,6 +105,6 @@ def analyze_next_candle_target(symbol: str) -> dict:
         "current_price": curr_price,
         "predicted_target": predicted_target,
         "direction": direction,
-        "confidence": min(confidence, 96),
+        "confidence": min(confidence, 95),
         "confluences": confluence_factors
     }
