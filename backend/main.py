@@ -1,4 +1,7 @@
 import logging
+import os
+from flask import Flask
+import threading
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from config import TELEGRAM_BOT_TOKEN, FOREX_PAIRS
@@ -6,6 +9,18 @@ from strategy import analyze_next_candle_target
 
 logging.basicConfig(level=logging.INFO)
 
+# 1. Flask App (Render ke port requirement ko poora karne ke liye)
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def home():
+    return "Institutional Signal Bot is Running Successfully!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    flask_app.run(host='0.0.0.0', port=port)
+
+# 2. Telegram Bot Command Handler
 async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /signal command execution handler.
@@ -37,9 +52,15 @@ async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Abhi market me exact high-confluence targets match nahi huay. Refresh karke dobara /signal bhein.")
 
 def main():
+    # Flask ko alag thread me run karein taake port block na ho
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+    
+    # Telegram Bot Start
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("signal", signal_command))
-    print("Bot is running...")
+    print("Bot & Flask server are running...")
     app.run_polling()
 
 if __name__ == "__main__":
