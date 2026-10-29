@@ -66,7 +66,7 @@ async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         fmt = f"{{:.{precision}f}}"
 
         # Estimate target duration based on timeframe string
-  -      duration_map = {
+        duration_map = {
             "1m": "1 to 3 Candles (approx. 1-3 minutes)",
             "5m": "1 to 3 Candles (approx. 5-15 minutes)",
             "15m": "1 to 3 Candles (approx. 15-45 minutes)",
