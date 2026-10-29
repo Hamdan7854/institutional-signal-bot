@@ -12,13 +12,11 @@ class MarketDataReader:
     def fetch_ohlcv(symbol: str = "EURUSD=X", period: str = "1mo", interval: str = "1h") -> pd.DataFrame:
         """
         Downloads historical price data and returns a standardized pandas DataFrame.
-        Handles formatting for all Forex pairs and other assets.
+        Handles formatting for all Forex pairs with 5-digit precision.
         """
         try:
-            # Format cleaning for Forex pairs input (e.g., EURUSD -> EURUSD=X)
             clean_symbol = symbol.upper().replace("/", "").replace("-", "").strip()
             
-            # If it looks like a standard 6-letter forex pair without '=X', append it
             if len(clean_symbol) == 6 and not clean_symbol.endswith("=X") and not "-" in symbol:
                 formatted_symbol = f"{clean_symbol}=X"
             else:
@@ -31,7 +29,6 @@ class MarketDataReader:
             if df.empty:
                 raise ValueError(f"No market data returned for symbol: {formatted_symbol}")
             
-            # Handle multi-index columns if returned by yfinance
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
 
@@ -48,7 +45,16 @@ class MarketDataReader:
             }
             df.rename(columns=column_mapping, inplace=True)
             
-            # Forex pairs on yfinance often have 0 or missing volume; handle gracefully
+            # Ensure 5 decimal places precision for forex prices if it's a forex pair
+            price_cols = ['open', 'high', 'low', 'close']
+            for col in price_cols:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+                    if "=X" in formatted_symbol or len(clean_symbol) == 6:
+                        df[col] = df[col].round(5)
+                    else:
+                        df[col] = df[col].round(2)
+
             if 'volume' not in df.columns:
                 df['volume'] = 1000.0
             else:
