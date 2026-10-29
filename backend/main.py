@@ -30,13 +30,13 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
         "🤖 *Institutional Market Structure Signal Bot*\n\n"
         "This bot applies Smart Money Concepts (SMC), Fair Value Gaps (FVG), "
-        "and Volume Profile Analysis to predict next-candle price targets.\n\n"
+        "and Volume Profile Analysis to predict next-candle price targets with 5-digit precision.\n\n"
         "*Usage*:\n"
         "`/signal [symbol] [timeframe]`\n\n"
         "*Examples*:\n"
-        "`/signal BTC-USD 1h`\n"
-        "`/signal ETH-USD 15m`\n"
-        "`/signal EURUSD=X 4h`"
+        "`/signal EURUSD 1h`\n"
+        "`/signal USDJPY 15m`\n"
+        "`/signal AUDCAD 5m`"
     )
     await update.message.reply_markdown(welcome_text)
 
@@ -60,21 +60,44 @@ async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         signal = engine.generate_predictive_signal(df, symbol=symbol)
 
+        # Determine decimal formatting based on asset type (5 digits for forex, 2 for crypto/others)
+        is_forex = "=X" in symbol or len(symbol.replace("/", "").replace("-", "")) == 6
+        precision = 5 if is_forex else 2
+        fmt = f"{{:.{precision}f}}"
+
+        # Estimate target duration based on timeframe string
+  -      duration_map = {
+            "1m": "1 to 3 Candles (approx. 1-3 minutes)",
+            "5m": "1 to 3 Candles (approx. 5-15 minutes)",
+            "15m": "1 to 3 Candles (approx. 15-45 minutes)",
+            "1h": "1 to 3 Candles (approx. 1 to 3 hours)",
+            "4h": "1 to 3 Candles (approx. 4 to 12 hours)",
+            "1d": "1 to 3 Candles (approx. 1 to 3 days)"
+        }
+        estimated_time = duration_map.get(timeframe.lower(), "Next 1 to 3 Candles")
+
         # Step 3: Format and Send Telegram Markdown Output
         direction_icon = "🟢" if signal['bias'] == "BULLISH" else "🔴"
         
+        current_price_str = fmt.format(signal['current_price'])
+        predicted_target_str = fmt.format(signal['predicted_target_price'])
+        poc_str = fmt.format(signal['poc_price'])
+        bsl_str = fmt.format(signal['bsl_target'])
+        ssl_str = fmt.format(signal['ssl_target'])
+
         report_message = (
             f"🎯 *INSTITUTIONAL SIGNAL REPORT*\n"
             f"────────────────────────\n"
             f"📌 *Asset*: `{signal['symbol']}`\n"
             f"⏱ *Timeframe*: `{timeframe}`\n"
-            f"💵 *Current Price*: `{signal['current_price']:.2f}`\n"
+            f"💵 *Current Price*: `{current_price_str}`\n"
             f"{direction_icon} *Market Structure Bias*: *{signal['bias']}*\n\n"
-            f"🔮 *PREDICTED NEXT CANDLE TARGET*: `{signal['predicted_target_price']:.2f}`\n\n"
+            f"🔮 *PREDICTED NEXT CANDLE TARGET*: `{predicted_target_str}`\n"
+            f"⏳ *Estimated Target Duration*: `{estimated_time}`\n\n"
             f"📊 *Institutional Level Mapping*:\n"
-            f"• *Point of Control (POC)*: `{signal['poc_price']:.2f}`\n"
-            f"• *Buy-Side Liquidity (BSL)*: `{signal['bsl_target']:.2f}`\n"
-            f"• *Sell-Side Liquidity (SSL)*: `{signal['ssl_target']:.2f}`\n\n"
+            f"• *Point of Control (POC)*: `{poc_str}`\n"
+            f"• *Buy-Side Liquidity (BSL)*: `{bsl_str}`\n"
+            f"• *Sell-Side Liquidity (SSL)*: `{ssl_str}`\n\n"
             f"🧠 *Confluence Rationale*:\n_{signal['confluence_reason']}_\n"
             f"────────────────────────"
         )
