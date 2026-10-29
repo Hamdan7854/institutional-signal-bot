@@ -6,7 +6,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 import config
 from market_dayallta import MarketDataReader
-from startegy import SMCStartegyEngine
+from strategy import SMCStrategyEngine
 
 # Logging Configuration
 logging.basicConfig(
