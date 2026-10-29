@@ -2,6 +2,7 @@ import logging
 import os
 from flask import Flask
 import threading
+import asyncio
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from config import TELEGRAM_BOT_TOKEN, FOREX_PAIRS
@@ -20,17 +21,25 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     flask_app.run(host='0.0.0.0', port=port)
 
-# 2. Telegram Bot Command Handler
+# 2. Telegram Bot Command Handler with Asynchronous Parallel Scanning
 async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /signal command execution handler.
-    Multi-pair scanning complete karke exact Next Candle Target report karta hai.
+    Multi-pair scanning ko parallel (asyncio.gather) execute karke speed tez karta hai.
     """
-    await update.message.reply_text("🔎 *Institutional Order Flow & Liquidity Engine Active...*\nMajor Forex pairs scan ho rahe hain...", parse_mode="Markdown")
+    await update.message.reply_text("🔎 *Institutional Order Flow & Liquidity Engine Active...*\nMajor Forex pairs fast scan ho rahe hain...", parse_Mode="Markdown")
     
+    # Helper function to run analysis in a thread pool so it doesn't block async loop
+    async def analyze_pair(symbol):
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, analyze_next_candle_target, symbol)
+
+    # Saare pairs ko aik sath parallel scan karna
+    tasks = [analyze_pair(symbol) for symbol in FOREX_PAIRS]
+    results = await asyncio.gather(*tasks)
+
     signals_sent = 0
-    for symbol in FOREX_PAIRS:
-        result = analyze_next_candle_target(symbol)
+    for result in results:
         if result:
             signals_sent += 1
             factors_str = "\n• ".join(result['confluences'])
@@ -60,7 +69,7 @@ def main():
     # Telegram Bot Start
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("signal", signal_command))
-    print("Bot & Flask server are running...")
+    print("Bot & Flask server are running with lightning-fast async scanning...")
     app.run_polling()
 
 if __name__ == "__main__":
