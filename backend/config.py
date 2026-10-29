@@ -3,12 +3,12 @@ import os
 # Telegram Bot Token Ingestion
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN_HERE")
 
-# Default Market Analysis Parameters (Forex Default)
-DEFAULT_SYMBOL = os.getenv("DEFAULT_SYMBOL", "EURUSD=X")
-DEFAULT_TIMEFRAME = os.getenv("DEFAULT_TIMEFRAME", "1h")
-DEFAULT_PERIOD = os.getenv("DEFAULT_PERIOD", "1mo")
+# Default Market Analysis Parameters (1-minute timeframe set kiya hai)
+DEFAULT_SYMBOL = os.getenv("DEFAULT_SYMBOL", "EURUSD")
+DEFAULT_TIMEFRAME = os.getenv("DEFAULT_TIMEFRAME", "1m")
+DEFAULT_PERIOD = os.getenv("DEFAULT_PERIOD", "1d")
 
-# Comprehensive List of Supported Forex Pairs (Major, Minor, Crosses)
+# Sabhi Major aur Minor Forex Pairs ki List
 SUPPORTED_FOREX_PAIRS = [
     "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "NZDUSD", "USDCHF",
     "EURGBP", "EURJPY", "EURAUD", "EURCAD", "EURNZD", "EURCHF",
