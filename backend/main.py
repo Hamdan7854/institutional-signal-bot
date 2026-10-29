@@ -27,7 +27,7 @@ async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     /signal command execution handler.
     Multi-pair scanning ko parallel (asyncio.gather) execute karke speed tez karta hai.
     """
-    await update.message.reply_text("🔎 *Institutional Order Flow & Liquidity Engine Active...*\nMajor Forex pairs fast scan ho rahe hain...", parse_Mode="Markdown")
+    await update.message.reply_text("🔎 *Institutional Order Flow & Liquidity Engine Active...*\nMajor Forex pairs fast scan ho rahe hain...", parse_mode="Markdown")
     
     # Helper function to run analysis in a thread pool so it doesn't block async loop
     async def analyze_pair(symbol):
@@ -58,7 +58,7 @@ async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(msg, parse_mode="Markdown")
             
     if signals_sent == 0:
-        await update.message.reply_text("⚠️ Abhi market me exact high-confluence targets match nahi huay. Refresh karke dobara /signal bhein.")
+        await update.message.reply_text("⚠️ Abhi market me exact high-confluence targets match nahi huay. Refresh karke dobara /signal bhein.", parse_mode="Markdown")
 
 def main():
     # Flask ko alag thread me run karein taake port block na ho
