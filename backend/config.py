@@ -3,8 +3,8 @@ import os
 # Telegram Bot Token Ingestion
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN_HERE")
 
-# Default Market Analysis Parameters
-DEFAULT_SYMBOL = os.getenv("DEFAULT_SYMBOL", "BTC-USD")
+# Default Market Analysis Parameters (Forex Pairs Enabled)
+DEFAULT_SYMBOL = os.getenv("DEFAULT_SYMBOL", "EURUSD=X")
 DEFAULT_TIMEFRAME = os.getenv("DEFAULT_TIMEFRAME", "1h")
 DEFAULT_PERIOD = os.getenv("DEFAULT_PERIOD", "1mo")
 
