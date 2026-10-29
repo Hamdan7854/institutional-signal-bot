@@ -3,10 +3,19 @@ import os
 # Telegram Bot Token Ingestion
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN_HERE")
 
-# Default Market Analysis Parameters (Forex Pairs Enabled)
+# Default Market Analysis Parameters (Forex Default)
 DEFAULT_SYMBOL = os.getenv("DEFAULT_SYMBOL", "EURUSD=X")
 DEFAULT_TIMEFRAME = os.getenv("DEFAULT_TIMEFRAME", "1h")
 DEFAULT_PERIOD = os.getenv("DEFAULT_PERIOD", "1mo")
+
+# Comprehensive List of Supported Forex Pairs (Major, Minor, Crosses)
+SUPPORTED_FOREX_PAIRS = [
+    "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "NZDUSD", "USDCHF",
+    "EURGBP", "EURJPY", "EURAUD", "EURCAD", "EURNZD", "EURCHF",
+    "GBPJPY", "GBPAUD", "GBPCAD", "GBPNZD", "GBPCHF",
+    "AUDJPY", "AUDCAD", "AUDNZD", "AUDCHF",
+    "CADJPY", "CADCHF", "NZDJPY", "NZDCHF"
+]
 
 # Analytical Hyperparameters
 SWING_LOOKBACK = int(os.getenv("SWING_LOOKBACK", "5"))
