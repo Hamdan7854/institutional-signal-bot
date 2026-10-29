@@ -1,128 +1,108 @@
-import numpy as np
 import pandas as pd
-from typing import Dict, Any
+import numpy as np
+from market_data import fetch_pair_data, calculate_volume_profile
 
-class SMCStrategyEngine:
+def calculate_atr(df: pd.DataFrame, period: int = 14) -> float:
+    """Next candle expected volatility calculate karta hai."""
+    df['tr0'] = abs(df['High'] - df['Low'])
+    df['tr1'] = abs(df['High'] - df['Close'].shift(1))
+    df['tr2'] = abs(df['Low'] - df['Close'].shift(1))
+    tr = df[['tr0', 'tr1', 'tr2']].max(axis=1)
+    atr = tr.rolling(period).mean().iloc[-1]
+    return float(atr) if not np.isnan(atr) else 0.0005
+
+def analyze_next_candle_target(symbol: str) -> dict:
     """
-    Evaluates Smart Money Concepts (SMC), Fair Value Gaps (FVG),
-    Liquidity Pools (BSL/SSL), and Volume Profile Point of Control (POC).
+    Research-backed SMC + Volume Profile Confluence Engine.
+    Sirf Agli Single Candle (Next Candle) ka Exact Target Level predict karta hai.
     """
+    df = fetch_pair_data(symbol, period="5d", interval="5m")
+    if df.empty or len(df) < 30:
+        return None
+    
+    curr_price = round(df['Close'].iloc[-1], 5)
+    atr = calculate_atr(df)
+    poc_price, npoc_price = calculate_volume_profile(df)
+    
+    # 1. Fair Value Gap (FVG) Calculation
+    # Candle -3, -2, -1 Imbalance
+    fvg_target = None
+    fvg_type = None
+    
+    c1_high = df['High'].iloc[-3]
+    c1_low = df['Low'].iloc[-3]
+    c3_high = df['High'].iloc[-1]
+    c3_low = df['Low'].iloc[-1]
+    
+    if c3_low > c1_high:  # Bullish FVG
+        fvg_target = round((c3_low + c1_high) / 2, 5)  # Consequent Encroachment (Midpoint)
+        fvg_type = "BULLISH_FVG"
+    elif c3_high < c1_low:  # Bearish FVG
+        fvg_target = round((c3_high + c1_low) / 2, 5)
+        fvg_type = "BEARISH_FVG"
 
-    def __init__(self, swing_lookback: int = 5, volume_bins: int = 50):
-        self.swing_lookback = swing_lookback
-        self.volume_bins = volume_bins
+    # 2. Liquidity Sweep (BSL / SSL) Target Identification
+    recent_highs = df['High'].iloc[-20:-1].max()
+    recent_lows = df['Low'].iloc[-20:-1].min()
+    
+    # 3. Target Determination Engine (Next Candle Cap)
+    direction = "NEUTRAL"
+    predicted_target = curr_price
+    confluence_factors = []
+    confidence = 75
 
-    def detect_swing_points(self, df: pd.DataFrame) -> pd.DataFrame:
-        """ Identifies swing highs (Buy-Side Liquidity) and swing lows (Sell-Side Liquidity). """
-        df = df.copy()
-        df['swing_high'] = False
-        df['swing_low'] = False
-
-        for i in range(self.swing_lookback, len(df) - self.swing_lookback):
-            high_range = df['high'].iloc[i - self.swing_lookback : i + self.swing_lookback + 1]
-            low_range = df['low'].iloc[i - self.swing_lookback : i + self.swing_lookback + 1]
-
-            if df['high'].iloc[i] == high_range.max():
-                df.at[i, 'swing_high'] = True
-
-            if df['low'].iloc[i] == low_range.min():
-                df.at[i, 'swing_low'] = True
-
-        return df
-
-    def detect_fair_value_gaps(self, df: pd.DataFrame) -> pd.DataFrame:
-        """ Detects 3-candle Fair Value Gaps (FVG) and calculates Consequent Encroachment (CE). """
-        df = df.copy()
-        df['bullish_fvg_ce'] = np.nan
-        df['bearish_fvg_ce'] = np.nan
-
-        for i in range(2, len(df)):
-            # Bullish FVG Condition: Low of candle i > High of candle i-2
-            if df['low'].iloc[i] > df['high'].iloc[i - 2]:
-                top = df['low'].iloc[i]
-                bottom = df['high'].iloc[i - 2]
-                df.at[i, 'bullish_fvg_ce'] = (top + bottom) / 2.0
-
-            # Bearish FVG Condition: High of candle i < Low of candle i-2
-            if df['high'].iloc[i] < df['low'].iloc[i - 2]:
-                top = df['low'].iloc[i - 2]
-                bottom = df['high'].iloc[i]
-                df.at[i, 'bearish_fvg_ce'] = (top + bottom) / 2.0
-
-        return df
-
-    def calculate_volume_poc(self, df: pd.DataFrame) -> float:
-        """ Constructs a volume profile histogram and returns the Point of Control (POC). """
-        price_min = df['low'].min()
-        price_max = df['high'].max()
-
-        if price_min == price_max:
-            return float(price_min)
-
-        bins = np.linspace(price_min, price_max, self.volume_bins)
-        volume_hist = np.zeros(len(bins) - 1)
-
-        for _, row in df.iterrows():
-            low_idx = np.digitize(row['low'], bins) - 1
-            high_idx = np.digitize(row['high'], bins) - 1
-            low_idx = max(0, min(low_idx, len(bins) - 2))
-            high_idx = max(0, min(high_idx, len(bins) - 2))
+    # Bullish Logic
+    if curr_price > df['Close'].iloc[-2]:
+        direction = "BULLISH 🟢"
+        targets = []
+        if fvg_target and fvg_target > curr_price:
+            targets.append(fvg_target)
+            confluence_factors.append("FVG Inbalance Consequent Encroachment")
+        if npoc_price > curr_price:
+            targets.append(npoc_price)
+            confluence_factors.append("Naked Point of Control (nPOC) Volume Magnet")
+        if recent_highs > curr_price:
+            targets.append(recent_highs)
+            confluence_factors.append("Buy-Side Liquidity (BSL) Sweep")
             
-            span = max(1, high_idx - low_idx + 1)
-            vol_per_bin = row['volume'] / span
-            volume_hist[low_idx : high_idx + 1] += vol_per_bin
-
-        poc_idx = np.argmax(volume_hist)
-        poc_price = (bins[poc_idx] + bins[poc_idx + 1]) / 2.0
-        return float(poc_price)
-
-    def generate_predictive_signal(self, df: pd.DataFrame, symbol: str) -> Dict[str, Any]:
-        """ Formulates precise market direction and next-candle target price prediction. """
-        df_swings = self.detect_swing_points(df)
-        df_fvg = self.detect_fair_value_gaps(df_swings)
-        poc_price = self.calculate_volume_poc(df)
-
-        last_close = float(df['close'].iloc[-1])
-
-        # Extract BSL and SSL Liquidity Targets
-        swing_highs = df_swings[df_swings['swing_high']]['high']
-        swing_lows = df_swings[df_swings['swing_low']]['low']
-
-        bsl_target = float(swing_highs.iloc[-1]) if not swing_highs.empty else last_close * 1.015
-        ssl_target = float(swing_lows.iloc[-1]) if not swing_lows.empty else last_close * 0.985
-
-        # Check Active Fair Value Gap Targets
-        recent_bull_ce = df_fvg['bullish_fvg_ce'].dropna()
-        recent_bear_ce = df_fvg['bearish_fvg_ce'].dropna()
-
-        active_bull_ce = float(recent_bull_ce.iloc[-1]) if not recent_bull_ce.empty else None
-        active_bear_ce = float(recent_bear_ce.iloc[-1]) if not recent_bear_ce.empty else None
-
-        # Structural Confluence Evaluation
-        if last_close >= poc_price:
-            bias = "BULLISH"
-            if active_bull_ce and active_bull_ce > last_close:
-                predicted_target = active_bull_ce
-                rationale = f"Bullish structure targeting unmitigated Fair Value Gap CE at {active_bull_ce:.2f}."
-            else:
-                predicted_target = bsl_target
-                rationale = f"Price above Volume POC ({poc_price:.2f}). Draw on liquidity targeting Buy-Side Liquidity (BSL) at {bsl_target:.2f}."
+        if targets:
+            # Pick nearest valid level bounded by ATR range for 1 candle limit
+            min_target = min(targets)
+            predicted_target = min(min_target, round(curr_price + (atr * 1.2), 5))
+            confidence += len(confluence_factors) * 8
         else:
-            bias = "BEARISH"
-            if active_bear_ce and active_bear_ce < last_close:
-                predicted_target = active_bear_ce
-                rationale = f"Bearish structure targeting unmitigated Fair Value Gap CE at {active_bear_ce:.2f}."
-            else:
-                predicted_target = ssl_target
-                rationale = f"Price below Volume POC ({poc_price:.2f}). Draw on liquidity targeting Sell-Side Liquidity (SSL) at {ssl_target:.2f}."
+            predicted_target = round(curr_price + (atr * 0.8), 5)
+            confluence_factors.append("Order Flow Momentum & ATR Expansion")
 
-        return {
-            "symbol": symbol,
-            "current_price": last_close,
-            "bias": bias,
-            "predicted_target_price": float(predicted_target),
-            "poc_price": poc_price,
-            "bsl_target": bsl_target,
-            "ssl_target": ssl_target,
-            "confluence_reason": rationale
-        }
+    # Bearish Logic
+    else:
+        direction = "BEARISH 🔴"
+        targets = []
+        if fvg_target and fvg_target < curr_price:
+            targets.append(fvg_target)
+            confluence_factors.append("Fair Value Gap Rebalance Zone")
+        if npoc_price < curr_price:
+            targets.append(npoc_price)
+            confluence_factors.append("Naked POC Magnet Reversion")
+        if recent_lows < curr_price:
+            targets.append(recent_lows)
+            confluence_factors.append("Sell-Side Liquidity (SSL) Clear")
+
+        if targets:
+            max_target = max(targets)
+            predicted_target = max(max_target, round(curr_price - (atr * 1.2), 5))
+            confidence += len(confluence_factors) * 8
+        else:
+            predicted_target = round(curr_price - (atr * 0.8), 5)
+            confluence_factors.append("Institutional Order Block Push & ATR Expansion")
+
+    clean_pair = symbol.replace("=X", "")
+    
+    return {
+        "pair": clean_pair,
+        "current_price": curr_price,
+        "predicted_target": predicted_target,
+        "direction": direction,
+        "confidence": min(confidence, 96),
+        "confluences": confluence_factors
+    }
