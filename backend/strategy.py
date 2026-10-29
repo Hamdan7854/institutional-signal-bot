@@ -56,9 +56,7 @@ def analyze_next_candle_target(symbol: str) -> dict:
     prev_body = abs(prev_close - prev_open)
     prev_range = prev_high - prev_low
     
-    # Agar pichli candle ki body ATR se bhot bari ho (Exhaustion) ya wick total range ka 60% se zyada ho (Rejection)
     if prev_range > (atr * 2.5) or (prev_range > 0 and (prev_body / prev_range) < 0.25):
-        # Market mein excessive noise ya reversal risk hai, signal skip kar do
         return None
 
     # 3. Filter 1: Multi-Timeframe Trend Check (5m/15m)
