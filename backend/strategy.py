@@ -1,5 +1,5 @@
 """
-strategy.py — Async multi-pair Forex signal scanner (Deriv WebSocket Safe Rate-Limited Adapter)
+strategy.py — Async multi-pair Forex signal scanner (Optimized for EURUSD & USDJPY)
 """
 
 from __future__ import annotations
@@ -18,9 +18,9 @@ import websockets
 LOG = logging.getLogger("forex_strategy")
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper())
 
+# Sirf EURUSD aur USDJPY rakhe hain taake speed fast ho aur HTTP 520 error na aaye
 DEFAULT_PAIRS = [
-    "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "USDCAD",
-    "AUDUSD", "NZDUSD", "EURJPY", "GBPJPY", "EURGBP",
+    "EURUSD", "USDJPY",
 ]
 
 PAIRS = [p.strip().upper() for p in os.getenv(
@@ -33,7 +33,7 @@ TIMEFRAMES = {
     "trend": "15m",
 }
 
-CANDLE_LIMIT = int(os.getenv("CANDLE_LIMIT", "300"))
+CANDLE_LIMIT = int(os.getenv("CANDLE_LIMIT", "200"))
 MIN_SCORE = int(os.getenv("MIN_SCORE", "7"))
 MIN_RR = float(os.getenv("MIN_RR", "1.5"))
 
@@ -67,12 +67,12 @@ class Signal:
 
 
 class DerivClient:
-    """Safe Deriv WebSocket adapter fetching timeframes one by one to avoid HTTP 520 errors."""
+    """Safe Deriv WebSocket adapter fetching timeframes securely."""
 
     def __init__(self):
         self.app_id = os.getenv("DERIV_APP_ID", "").strip()
         self.api_token = os.getenv("DERIV_API_TOKEN", "").strip()
-        self.sem = asyncio.Semaphore(1)  # Ek waqt mein sirf ek connection chalega taake server load na le
+        self.sem = asyncio.Semaphore(1)
 
     async def _fetch_single_tf(self, websocket, deriv_symbol: str, granularity: int) -> List[Candle]:
         req = {
@@ -126,12 +126,12 @@ class DerivClient:
                             await websocket.recv()
 
                         execution = await self._fetch_single_tf(websocket, deriv_symbol, gran_map["1m"])
-                        await asyncio.sleep(0.3)
+                        await asyncio.sleep(0.2)
                         confirmation = await self._fetch_single_tf(websocket, deriv_symbol, gran_map["5m"])
-                        await asyncio.sleep(0.3)
+                        await asyncio.sleep(0.2)
                         trend_data = await self._fetch_single_tf(websocket, deriv_symbol, gran_map["15m"])
 
-                        if len(execution) < 60 or len(confirmation) < 60 or len(trend_data) < 60:
+                        if len(execution) < 50 or len(confirmation) < 50 or len(trend_data) < 50:
                             raise ValueError(f"{symbol}: Insufficient valid candles received")
 
                         return execution, confirmation, trend_data
@@ -139,7 +139,7 @@ class DerivClient:
                 except Exception as exc:
                     last_err = exc
                     if attempt < 2:
-                        await asyncio.sleep(1.5 * (attempt + 1))
+                        await asyncio.sleep(1.0 * (attempt + 1))
 
         raise RuntimeError(f"Failed to fetch {symbol} from Deriv: {last_err}")
 
@@ -263,16 +263,12 @@ def _analyse(
     confirmation: Sequence[Candle],
     trend_data: Sequence[Candle],
 ) -> Optional[Signal]:
-    if min(len(execution), len(confirmation), len(trend_data)) < 60:
+    if min(len(execution), len(confirmation), len(trend_data)) < 50:
         return None
 
     last = execution[-1]
     atr = _atr(execution)
     if atr <= 0:
-        return None
-
-    candle_range = last.high - last.low
-    if candle_range < atr * 0.15 or candle_range > atr * 3.0:
         return None
 
     htf_trend = _trend(trend_data)
@@ -289,8 +285,6 @@ def _analyse(
     if direction == "CALL" and htf_trend != "BULLISH":
         return None
     if direction == "PUT" and htf_trend != "BEARISH":
-        return None
-    if mid_trend not in (htf_trend, "NEUTRAL"):
         return None
 
     confirmations = [
@@ -312,8 +306,6 @@ def _analyse(
     confirmations.append(f"Hurst Exponent: {hurst:.2f}")
     if hurst < 0.5:
         score += 1
-    elif hurst > 0.55:
-        score += 1
 
     sup, res = _support_resistance_zones(execution)
     if sup is not None and res is not None:
@@ -326,20 +318,8 @@ def _analyse(
 
     gap = _fvg(execution, direction)
     if gap:
-        confirmations.append(f"FVG zone {gap[0]:.5f}–{gap[1]:.5f}")
+        confirmations.append(f"FVG zone")
         score += 2
-
-    body = abs(last.close - last.open)
-    if body >= atr * 0.5 and ((direction == "CALL" and last.close > last.open) or (direction == "PUT" and last.close < last.open)):
-        confirmations.append("Directional displacement")
-        score += 1
-
-    recent = execution[-8:-1]
-    for candle in reversed(recent):
-        if (direction == "CALL" and candle.close < candle.open) or (direction == "PUT" and candle.close > candle.open):
-            confirmations.append("Recent opposite-candle order-block proxy")
-            score += 1
-            break
 
     if score < MIN_SCORE:
         return None
@@ -372,7 +352,7 @@ def _analyse(
         timeframe=TIMEFRAMES["execution"],
         confirmations=confirmations,
         candle_time=last.timestamp,
-        notes="Rule-based research signal with safe Deriv WebSocket API.",
+        notes="Optimized Deriv WebSocket signal.",
     )
 
 
@@ -392,14 +372,13 @@ async def scan_all(pairs: Optional[Iterable[str]] = None) -> Dict[str, Any]:
     selected = [p.upper().strip() for p in (pairs or PAIRS) if p.strip()]
     started = time.perf_counter()
     
-    # Pairs ko aik aik kar ke ya controlled flow mein run karna taake HTTP 520 error na aaye
     signals = []
     errors = {}
     for pair in selected:
         res = await analyze_next_candle_target(pair)
         if res:
             signals.append(res)
-        await asyncio.sleep(0.5)  # Har pair ke darmiyan chota sa pause
+        await asyncio.sleep(0.1)
 
     signals.sort(key=lambda x: x["score"], reverse=True)
     return {
