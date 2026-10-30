@@ -1,6 +1,6 @@
 """
 strategy.py — Async multi-pair Forex signal scanner (DataDriv adapter)
-Updated with KAMA, Hurst Exponent, and Ranging Support/Resistance
+Updated with KAMA, Hurst Exponent, Ranging Support/Resistance, and analyze_next_candle_target
 
 IMPORTANT
 ---------
@@ -245,7 +245,6 @@ def _kama(c: Sequence[Candle], period: int = 10, fast_end: float = 2.0 / 3.0, sl
         return None
     closes = [x.close for x in c]
     
-    # Initialize KAMA with simple moving average of the first period
     kama_values = [sum(closes[:period]) / period]
     
     for i in range(period, len(closes)):
@@ -274,7 +273,6 @@ def _hurst_exponent(c: Sequence[Candle], max_lag: int = 20) -> float:
     lags = range(2, max_lag)
     tau = []
     for lag in lags:
-        # Standard deviation of differences
         diffs = [closes[i] - closes[i - lag] for i in range(lag, len(closes))]
         if not diffs:
             continue
@@ -285,7 +283,6 @@ def _hurst_exponent(c: Sequence[Candle], max_lag: int = 20) -> float:
     if len(tau) < 2:
         return 0.5
         
-    # Fit log-log linear regression to estimate Hurst exponent (slope)
     log_lags = [math.log(l) for l in lags[:len(tau)]]
     log_tau = [math.log(t) if t > 0 else 0 for t in tau]
     
@@ -441,7 +438,7 @@ def _analyse(
     ]
     score = 3
 
-    # --- NEW ADDITION: KAMA FILTER ---
+    # KAMA FILTER
     kama_val = _kama(execution)
     if kama_val is not None:
         confirmations.append(f"KAMA level: {kama_val:.5f}")
@@ -450,17 +447,15 @@ def _analyse(
         elif direction == "PUT" and last.close < kama_val:
             score += 1
 
-    # --- NEW ADDITION: HURST EXPONENT REGIME FILTER ---
+    # HURST EXPONENT REGIME FILTER
     hurst = _hurst_exponent(execution)
     confirmations.append(f"Hurst Exponent: {hurst:.2f}")
     if hurst < 0.5:
-        # Mean-reverting / ranging environment booster
         score += 1
     elif hurst > 0.55:
-        # Trending environment alignment
         score += 1
 
-    # --- NEW ADDITION: RANGING SUPPORT / RESISTANCE ZONES ---
+    # RANGING SUPPORT / RESISTANCE ZONES
     sup, res = _support_resistance_zones(execution)
     if sup is not None and res is not None:
         if direction == "CALL" and abs(last.low - sup) <= atr * 0.75:
@@ -539,6 +534,21 @@ def _analyse(
             "broker spread, slippage and feed alignment are not included."
         ),
     )
+
+
+def analyze_next_candle_target(
+    pair: str,
+    execution: Sequence[Candle],
+    confirmation: Sequence[Candle],
+    trend_data: Sequence[Candle]
+) -> Optional[Dict[str, Any]]:
+    """
+    Wrapper function matching main.py import expectations to analyze candles and return signal dictionary.
+    """
+    signal = _analyse(pair, execution, confirmation, trend_data)
+    if signal:
+        return signal.to_dict()
+    return None
 
 
 async def scan_pair(client: DataDrivClient, pair: str) -> Tuple[str, Optional[Signal], Optional[str]]:
