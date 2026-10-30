@@ -5,9 +5,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN_HE
 
 # Major Forex Pairs
 FOREX_PAIRS = [
-    "EURUSD=X", "GBPUSD=X", "USDJPY=X", "AUDUSD=X",
-    "USDCAD=X", "USDCHF=X", "NZDUSD=X", "EURGBP=X",
-    "EURJPY=X", "GBPJPY=X"
+    "EURUSD=X", "USDJPY=X",
 ]
 
 # Timeframe Settings for Multi-Timeframe Analysis
