@@ -1,5 +1,7 @@
 """
-strategy.py — OANDA V20 API Forex Signal Scanner (80% Match Rule & 5 Decimals)
+strategy.py — Institutional ICT/SMC & Quantitative Single-Candle Forex Signal Scanner
+Integrates: Liquidity Sweeps, MSS, FVG, Order Blocks, Volume Profile (POC/HVN/LVN),
+            Hurst Exponent Regime, Support/Resistance Zones, KAMA, and ATR Volatility.
 """
 
 from __future__ import annotations
@@ -16,12 +18,16 @@ import requests
 LOG = logging.getLogger("forex_strategy")
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper())
 
-DEFAULT_PAIRS = ["EURUSD", "USDJPY", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD", "EURJPY", "GBPJPY", "EURGBP"]
+DEFAULT_PAIRS = [
+    "EURUSD", "USDJPY", "GBPUSD", "AUDUSD", 
+    "USDCAD", "USDCHF", "NZDUSD", "EURJPY", 
+    "GBPJPY", "EURGBP"
+]
 
 TIMEFRAMES = {
-    "execution": "M1",    # 1 minute
-    "confirmation": "M5", # 5 minutes
-    "trend": "M15",       # 15 minutes
+    "execution": "M1",    # 1 minute execution
+    "confirmation": "M5", # 5 minutes structure
+    "trend": "M15",       # 15 minutes trend regime
 }
 
 MIN_RR = float(os.getenv("MIN_RR", "1.5"))
@@ -57,7 +63,7 @@ class Signal:
 
 
 class OandaClient:
-    """OANDA V20 REST API client for fetching Forex candles reliably."""
+    """OANDA V20 REST API Client for real-time tick and candle data fetching."""
 
     def __init__(self):
         self.api_key = os.getenv("OANDA_API_KEY", "").strip()
@@ -66,10 +72,9 @@ class OandaClient:
 
     def _fetch_candles(self, symbol: str, granularity: str) -> List[Candle]:
         if not self.api_key:
-            raise RuntimeError("OANDA_API_KEY environment variable is missing")
+            raise RuntimeError("OANDA_API_KEY environment variable missing")
 
         oanda_symbol = f"{symbol[:3]}_{symbol[3:]}"
-
         url = f"{self.base_url}/instruments/{oanda_symbol}/candles"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -78,7 +83,7 @@ class OandaClient:
         params = {
             "granularity": granularity,
             "count": 100,
-            "price": "M"
+            "price": "MBA" # Mid, Bid, Ask
         }
 
         response = requests.get(url, headers=headers, params=params, timeout=10)
@@ -93,30 +98,32 @@ class OandaClient:
             if not rc.get("complete", True):
                 continue
             mid = rc.get("mid", {})
+            vol = float(rc.get("volume", 0))
             out.append(Candle(
                 timestamp=float(rc.get("time", 0)),
                 open=float(mid.get("o", 0)),
                 high=float(mid.get("h", 0)),
                 low=float(mid.get("l", 0)),
                 close=float(mid.get("c", 0)),
-                volume=float(rc.get("volume", 0))
+                volume=vol
             ))
         return out
 
     async def fetch_timeframes(self, symbol: str) -> Tuple[List[Candle], List[Candle], List[Candle]]:
         loop = asyncio.get_running_loop()
-        
         execution = await loop.run_in_executor(None, self._fetch_candles, symbol, TIMEFRAMES["execution"])
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
         confirmation = await loop.run_in_executor(None, self._fetch_candles, symbol, TIMEFRAMES["confirmation"])
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
         trend_data = await loop.run_in_executor(None, self._fetch_candles, symbol, TIMEFRAMES["trend"])
 
-        if len(execution) < 40 or len(confirmation) < 40 or len(trend_data) < 40:
-            raise ValueError(f"{symbol}: Insufficient candles from OANDA")
+        if len(execution) < 50 or len(confirmation) < 50 or len(trend_data) < 50:
+            raise ValueError(f"{symbol}: Insufficient candles received from OANDA")
 
         return execution, confirmation, trend_data
 
+
+# --- Quantitative Indicators & ICT/SMC Calculations ---
 
 def _atr(c: Sequence[Candle], period: int = 14) -> float:
     trs = []
@@ -143,26 +150,121 @@ def _kama(c: Sequence[Candle], period: int = 10, fast_end: float = 2.0 / 3.0, sl
     return kama_values[-1] if kama_values else None
 
 
-def _swings(c: Sequence[Candle], left: int = 2, right: int = 2):
-    highs, lows = [], []
-    for i in range(left, len(c) - right):
-        if all(c[i].high > c[j].high for j in range(i-left, i)) and all(c[i].high >= c[j].high for j in range(i+1, i+right+1)):
-            highs.append((i, c[i].high))
-        if all(c[i].low < c[j].low for j in range(i-left, i)) and all(c[i].low <= c[j].low for j in range(i+1, i+right+1)):
-            lows.append((i, c[i].low))
-    return highs, lows
+def _hurst_exponent(c: Sequence[Candle], max_lag: int = 20) -> float:
+    """Calculates Hurst Exponent to measure trend persistence vs mean-reversion."""
+    closes = [x.close for x in c[-100:]]
+    if len(closes) < 30:
+        return 0.5
+
+    lags = range(2, max_lag)
+    tau = []
+    for lag in lags:
+        pp = [closes[i + lag] - closes[i] for i in range(len(closes) - lag)]
+        std = math.sqrt(sum(x ** 2 for x in pp) / len(pp)) if pp else 0.00001
+        tau.append(std if std > 0 else 0.00001)
+
+    reg = [math.log(t) for t in tau]
+    x_vals = [math.log(l) for l in lags]
+    
+    mean_x = sum(x_vals) / len(x_vals)
+    mean_y = sum(reg) / len(reg)
+    
+    num = sum((x_vals[i] - mean_x) * (reg[i] - mean_y) for i in range(len(x_vals)))
+    den = sum((x_vals[i] - mean_x) ** 2 for i in range(len(x_vals)))
+    
+    hurst = (num / den) if den != 0 else 0.5
+    return max(0.0, min(1.0, hurst))
 
 
-def _trend(c: Sequence[Candle]) -> str:
-    highs, lows = _swings(c[-50:])
-    if len(highs) < 2 or len(lows) < 2:
-        return "NEUTRAL"
-    if highs[-1][1] > highs[-2][1] and lows[-1][1] > lows[-2][1]:
-        return "BULLISH"
-    if highs[-1][1] < highs[-2][1] and lows[-1][1] < lows[-2][1]:
-        return "BEARISH"
-    return "NEUTRAL"
+def _liquidity_sweep(c: Sequence[Candle], lookback: int = 20):
+    if len(c) < lookback + 2:
+        return None
+    last = c[-1]
+    prior = c[-lookback-1:-1]
+    prior_high = max(x.high for x in prior)
+    prior_low = min(x.low for x in prior)
+    if last.high > prior_high and last.close < prior_high:
+        return "BEARISH_SWEEP", prior_high
+    if last.low < prior_low and last.close > prior_low:
+        return "BULLISH_SWEEP", prior_low
+    return None
 
+
+def _mss(c: Sequence[Candle], direction: str, lookback: int = 15) -> bool:
+    recent = c[-lookback-1:-1]
+    if not recent:
+        return False
+    if direction == "CALL":
+        return c[-1].close > max(x.high for x in recent)
+    return c[-1].close < min(x.low for x in recent)
+
+
+def _detect_fvg(c: Sequence[Candle]) -> Tuple[bool, Optional[float]]:
+    """Detects 3-candle Fair Value Gap (FVG)."""
+    if len(c) < 3:
+        return False, None
+    c1, _, c3 = c[-3], c[-2], c[-1]
+    if c3.low > c1.high: # Bullish FVG
+        return True, c1.high
+    elif c3.high < c1.low: # Bearish FVG
+        return True, c1.low
+    return False, None
+
+
+def _detect_order_block(c: Sequence[Candle]) -> Tuple[bool, Optional[float]]:
+    """Identifies Order Block (OB) zones."""
+    if len(c) < 5:
+        return False, None
+    last = c[-1]
+    if last.close > last.open:
+        # Looking for last bearish candle before strong bullish move
+        for i in range(-2, -6, -1):
+            if c[i].close < c[i].open:
+                return True, c[i].low
+    else:
+        # Looking for last bullish candle before strong bearish move
+        for i in range(-2, -6, -1):
+            if c[i].close > c[i].open:
+                return True, c[i].high
+    return False, None
+
+
+def _volume_profile(c: Sequence[Candle], bins: int = 10) -> Tuple[float, float, float]:
+    """Calculates Point of Control (POC), High Volume Node (HVN), Low Volume Node (LVN)."""
+    if not c:
+        return 0.0, 0.0, 0.0
+    lows = [x.low for x in c[-50:]]
+    highs = [x.high for x in c[-50:]]
+    min_p, max_p = min(lows), max(highs)
+    if min_p == max_p:
+        return min_p, min_p, min_p
+
+    step = (max_p - min_p) / bins
+    v_bins = [0.0] * bins
+    for candle in c[-50:]:
+        bin_idx = min(int((candle.close - min_p) / step), bins - 1)
+        v_bins[bin_idx] += candle.volume if candle.volume > 0 else 1.0
+
+    max_v = max(v_bins)
+    min_v = min(v_bins)
+    poc_idx = v_bins.index(max_v)
+    lvn_idx = v_bins.index(min_v)
+
+    poc = min_p + (poc_idx + 0.5) * step
+    hvn = poc
+    lvn = min_p + (lvn_idx + 0.5) * step
+
+    return poc, hvn, lvn
+
+
+def _support_resistance_zones(c: Sequence[Candle], lookback: int = 50) -> Tuple[float, float]:
+    recent = c[-lookback:]
+    sup = min(x.low for x in recent)
+    res = max(x.high for x in recent)
+    return sup, res
+
+
+# --- Strategy Analysis Function ---
 
 def _analyse(
     pair: str,
@@ -177,71 +279,95 @@ def _analyse(
     prev = execution[-2]
     atr = _atr(execution)
 
-    # Direction determination based on candle momentum
     direction = "CALL" if last.close >= prev.close else "PUT"
-
-    # Total 5 conditions setup
     confirmations = []
-    
-    # Condition 1: Candle Momentum Check
-    c1_passed = True
-    if direction == "CALL":
-        confirmations.append("✔ Bullish candle momentum confirmed")
+
+    # 1. ICT/SMC Liquidity Sweep
+    sweep_data = _liquidity_sweep(execution)
+    c1_passed = False
+    if sweep_data:
+        sweep_type, level = sweep_data
+        c1_passed = True
+        confirmations.append(f"✔ SMC Liquidity Sweep detected at {level:.5f}")
     else:
-        confirmations.append("✔ Bearish candle momentum confirmed")
+        confirmations.append("✖ No active Liquidity Sweep found")
 
-    # Condition 2: Trend Alignment (HTF Trend)
-    htf_trend = _trend(trend_data)
-    c2_passed = (htf_trend != "NEUTRAL")
-    confirmations.append(f"✔ Higher Timeframe Trend: {htf_trend}")
+    # 2. Market Structure Shift (MSS)
+    c2_passed = _mss(execution, direction)
+    if c2_passed:
+        confirmations.append("✔ Market Structure Shift (MSS) confirmed")
+    else:
+        confirmations.append("✖ MSS structure pending")
 
-    # Condition 3: KAMA Filter Check
+    # 3. Fair Value Gap (FVG) / Order Block (OB)
+    fvg_found, fvg_level = _detect_fvg(execution)
+    ob_found, ob_level = _detect_order_block(execution)
+    c3_passed = fvg_found or ob_found
+    if fvg_found and fvg_level is not None:
+        confirmations.append(f"✔ Fair Value Gap (FVG) active at {fvg_level:.5f}")
+    elif ob_found and ob_level is not None:
+        confirmations.append(f"✔ Order Block (OB) zone at {ob_level:.5f}")
+    else:
+        confirmations.append("✖ FVG/OB alignment missing")
+
+    # 4. Volume Profile (Naked POC / HVN / LVN)
+    poc, hvn, lvn = _volume_profile(execution)
+    c4_passed = abs(last.close - poc) <= atr * 1.5
+    if c4_passed:
+        confirmations.append(f"✔ Volume Profile POC confluence at {poc:.5f}")
+    else:
+        confirmations.append(f"✖ Price away from POC ({poc:.5f})")
+
+    # 5. Hurst Exponent Regime Filter
+    hurst_val = _hurst_exponent(execution)
+    c5_passed = hurst_val > 0.52 # Trending regime
+    if c5_passed:
+        confirmations.append(f"✔ Hurst Exponent Trend Regime ({hurst_val:.2f})")
+    else:
+        confirmations.append(f"✖ Hurst Mean-Reverting Regime ({hurst_val:.2f})")
+
+    # 6. Support & Resistance Zones
+    sup, res = _support_resistance_zones(execution)
+    c6_passed = False
+    if direction == "CALL" and abs(last.low - sup) <= atr * 1.2:
+        c6_passed = True
+        confirmations.append(f"✔ Support Zone Confluence at {sup:.5f}")
+    elif direction == "PUT" and abs(last.high - res) <= atr * 1.2:
+        c6_passed = True
+        confirmations.append(f"✔ Resistance Zone Confluence at {res:.5f}")
+    else:
+        confirmations.append("✖ Distance from key S/R zone moderate")
+
+    # 7. KAMA Trend Indicator
     kama_val = _kama(execution)
-    c3_passed = False
+    c7_passed = False
     if kama_val is not None:
         if direction == "CALL" and last.close >= kama_val:
-            c3_passed = True
-            confirmations.append(f"✔ Price is above KAMA indicator ({kama_val:.5f})")
+            c7_passed = True
+            confirmations.append(f"✔ Price above KAMA line ({kama_val:.5f})")
         elif direction == "PUT" and last.close <= kama_val:
-            c3_passed = True
-            confirmations.append(f"✔ Price is below KAMA indicator ({kama_val:.5f})")
+            c7_passed = True
+            confirmations.append(f"✔ Price below KAMA line ({kama_val:.5f})")
         else:
-            confirmations.append(f"✖ KAMA filter neutral ({kama_val:.5f})")
+            confirmations.append(f"✖ Price cross counter KAMA ({kama_val:.5f})")
 
-    # Condition 4: Support & Resistance Confluence Check
-    recent_lows = [x.low for x in execution[-20:]]
-    recent_highs = [x.high for x in execution[-20:]]
-    sup = min(recent_lows) if recent_lows else last.close
-    res = max(recent_highs) if recent_highs else last.close
-    
-    c4_passed = False
-    if direction == "CALL" and abs(last.low - sup) <= atr * 1.0:
-        c4_passed = True
-        confirmations.append(f"✔ Support level confluence at {sup:.5f}")
-    elif direction == "PUT" and abs(last.high - res) <= atr * 1.0:
-        c4_passed = True
-        confirmations.append(f"✔ Resistance level confluence at {res:.5f}")
-    else:
-        confirmations.append("✖ S/R zone distance moderate")
+    # 8. Volatility & ATR Check
+    c8_passed = atr > 0.00005
+    if c8_passed:
+        confirmations.append(f"✔ ATR Volatility stable ({atr:.5f})")
 
-    # Condition 5: Volatility & ATR Stability Check
-    c5_passed = (atr > 0.00005)
-    if c5_passed:
-        confirmations.append(f"✔ ATR volatility stable ({atr:.5f})")
-
-    # Total conditions list
-    all_conditions = [c1_passed, c2_passed, c3_passed, c4_passed, c5_passed]
+    # --- 80% Rule Validation ---
+    all_conditions = [c1_passed, c2_passed, c3_passed, c4_passed, c5_passed, c6_passed, c7_passed, c8_passed]
     total_checks = len(all_conditions)
     matched_count = sum(1 for x in all_conditions if x)
-    
-    # 80% rule: minimum 4 out of 5 conditions must match
-    required_matches = math.ceil(total_checks * 0.8) # 4
+
+    required_matches = math.ceil(total_checks * 0.8) # Minimum 6 out of 8 matches (75-80%)
     if matched_count < required_matches:
         return None
 
     confidence_score = int((matched_count / total_checks) * 100)
 
-    # 5 decimal precise calculations for Entry, Stop Loss, Target
+    # 5-Decimal Calculations for Next Candle Target
     entry = round(float(last.close), 5)
     if direction == "CALL":
         stop = round(entry - (atr * 1.2), 5)
@@ -267,7 +393,7 @@ def _analyse(
         timeframe="1m",
         confirmations=confirmations,
         candle_time=last.timestamp,
-        notes=f"OANDA V20 Live Signal ({matched_count}/{total_checks} conditions matched).",
+        notes=f"SMC/Quant Next Candle Target ({matched_count}/{total_checks} conditions matched).",
     )
 
 
@@ -279,7 +405,7 @@ async def analyze_next_candle_target(pair: str) -> Optional[Dict[str, Any]]:
         if signal:
             return signal.to_dict()
     except Exception as exc:
-        LOG.exception("OANDA analysis failed for %s: %s", pair, exc)
+        LOG.exception("OANDA analysis error on pair %s: %s", pair, exc)
     return None
 
 
@@ -293,7 +419,7 @@ async def scan_all(pairs: Optional[Iterable[str]] = None) -> Dict[str, Any]:
         res = await analyze_next_candle_target(pair)
         if res:
             signals.append(res)
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.08)
 
     signals.sort(key=lambda x: x["confidence"], reverse=True)
     return {
