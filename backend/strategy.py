@@ -1,6 +1,6 @@
 """
 strategy.py — Async multi-pair Forex signal scanner (Deriv WebSocket Adapter)
-Updated with KAMA, Hurst Exponent, Ranging Support/Resistance, and analyze_next_candle_target
+Updated with KAMA, Hurst Exponent, Ranging Support/Resistance, and timeout handling
 """
 
 from __future__ import annotations
@@ -68,7 +68,7 @@ class Signal:
 
 
 class DerivClient:
-    """Async WebSocket adapter for Deriv API candles."""
+    """Async WebSocket adapter for Deriv API candles with retry and timeout fix."""
 
     def __init__(self):
         self.app_id = os.getenv("DERIV_APP_ID", "").strip()
@@ -78,50 +78,55 @@ class DerivClient:
         if not self.app_id:
             raise RuntimeError("DERIV_APP_ID environment variable is missing")
 
-        # Map interval to granularity in seconds
         gran_map = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600}
         granularity = gran_map.get(interval, 60)
-
-        # Format symbol for Deriv (e.g. EURUSD -> frxEURUSD)
         deriv_symbol = symbol if symbol.startswith("frx") or symbol.startswith("R_") else f"frx{symbol}"
-
         uri = f"wss://ws.derivws.com/websockets_v3?app_id={self.app_id}"
+
+        last_err = None
+        for attempt in range(3):
+            try:
+                async with websockets.connect(uri, open_timeout=25) as websocket:
+                    if self.api_token:
+                        await websocket.send(json.dumps({"authorize": self.api_token}))
+                        await websocket.recv()
+
+                    req = {
+                        "ticks_history": deriv_symbol,
+                        "adjust_start_time": 1,
+                        "count": CANDLE_LIMIT,
+                        "end": "latest",
+                        "granularity": granularity,
+                        "style": "candles"
+                    }
+                    await websocket.send(json.dumps(req))
+                    resp = await websocket.recv()
+                    data = json.loads(resp)
+
+                    if "error" in data:
+                        raise RuntimeError(f"Deriv API error for {symbol}: {data['error'].get('message')}")
+
+                    candles_data = data.get("candles", [])
+                    out: List[Candle] = []
+                    for row in candles_data:
+                        ts = row.get("epoch")
+                        o = float(row.get("open", 0))
+                        h = float(row.get("high", 0))
+                        l = float(row.get("low", 0))
+                        c = float(row.get("close", 0))
+                        if h < l or h < max(o, c) or l > min(o, c):
+                            continue
+                        out.append(Candle(ts, o, h, l, c, 0.0))
+
+                    if len(out) < 60:
+                        raise ValueError(f"{symbol} {interval}: only {len(out)} valid candles")
+                    return out
+            except Exception as exc:
+                last_err = exc
+                if attempt < 2:
+                    await asyncio.sleep(1.0 * (attempt + 1))
         
-        async with websockets.connect(uri) as websocket:
-            if self.api_token:
-                await websocket.send(json.dumps({"authorize": self.api_token}))
-                await websocket.recv()
-
-            req = {
-                "ticks_history": deriv_symbol,
-                "adjust_start_time": 1,
-                "count": CANDLE_LIMIT,
-                "end": "latest",
-                "granularity": granularity,
-                "style": "candles"
-            }
-            await websocket.send(json.dumps(req))
-            resp = await websocket.recv()
-            data = json.loads(resp)
-
-            if "error" in data:
-                raise RuntimeError(f"Deriv API error for {symbol}: {data['error'].get('message')}")
-
-            candles_data = data.get("candles", [])
-            out: List[Candle] = []
-            for row in candles_data:
-                ts = row.get("epoch")
-                o = float(row.get("open", 0))
-                h = float(row.get("high", 0))
-                l = float(row.get("low", 0))
-                c = float(row.get("close", 0))
-                if h < l or h < max(o, c) or l > min(o, c):
-                    continue
-                out.append(Candle(ts, o, h, l, c, 0.0))
-
-            if len(out) < 60:
-                raise ValueError(f"{symbol} {interval}: only {len(out)} valid candles")
-            return out
+        raise RuntimeError(f"Failed to fetch {symbol} {interval} from Deriv: {last_err}")
 
 
 def _atr(c: Sequence[Candle], period: int = 14) -> float:
