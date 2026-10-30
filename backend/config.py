@@ -3,9 +3,10 @@ import os
 # Telegram Bot Setup
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN_HERE")
 
-# Major Forex Pairs
+# All Major Forex Pairs
 FOREX_PAIRS = [
-    "EURUSD=X", "USDJPY=X",
+    "EURUSD", "USDJPY", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD",
+    "EURJPY", "GBPJPY", "EURGBP"
 ]
 
 # Timeframe Settings for Multi-Timeframe Analysis
