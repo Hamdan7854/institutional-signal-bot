@@ -186,7 +186,7 @@ def _mss(c: Sequence[Candle], direction: str, lookback: int = 15) -> bool:
     recent = c[-lookback-1:-1]
     if not recent:
         return False
-    if direction == "CALL":
+    if direction == "BUY":
         return c[-1].close > max(x.high for x in recent)
     return c[-1].close < min(x.low for x in recent)
 
@@ -257,7 +257,7 @@ def _analyse(
     last = execution[-1]
     prev = execution[-2]
     atr = _atr(execution)
-    direction = "CALL" if last.close >= prev.close else "PUT"
+    direction = "BUY" if last.close >= prev.close else "SELL"
 
     confirmations = []
 
@@ -283,18 +283,18 @@ def _analyse(
     # 2. Support & Resistance Confluence Zone (Exact bounce zone within 1.0 * ATR)
     sup, res = _support_resistance_zones(execution)
     sr_passed = False
-    if direction == "CALL" and abs(last.low - sup) <= atr * 1.0:
+    if direction == "BUY" and abs(last.low - sup) <= atr * 1.0:
         sr_passed = True
-    elif direction == "PUT" and abs(last.high - res) <= atr * 1.0:
+    elif direction == "SELL" and abs(last.high - res) <= atr * 1.0:
         sr_passed = True
 
     # 3. KAMA Distance (Price within 1.5 * ATR of KAMA level)
     kama_val = _kama(execution)
     kama_passed = False
     if kama_val is not None and abs(last.close - kama_val) <= atr * 1.5:
-        if direction == "CALL" and last.close >= kama_val:
+        if direction == "BUY" and last.close >= kama_val:
             kama_passed = True
-        elif direction == "PUT" and last.close <= kama_val:
+        elif direction == "SELL" and last.close <= kama_val:
             kama_passed = True
 
     # 4. ATR Volatility Golden Range (0.00008 to 0.00025)
@@ -331,7 +331,7 @@ def _analyse(
 
     # 5-Decimal Calculations for Next Candle Target
     entry = round(float(last.close), 5)
-    if direction == "CALL":
+    if direction == "BUY":
         stop = round(entry - (atr * 1.2), 5)
         target = round(entry + (atr * (1.2 * MIN_RR)), 5)
     else:
