@@ -1,6 +1,6 @@
 """
-strategy.py — Async multi-pair Forex signal scanner (Deriv WebSocket Adapter)
-Updated with KAMA, Hurst Exponent, Ranging Support/Resistance, and timeout handling
+strategy.py — Async multi-pair Forex signal scanner (Deriv WebSocket Optimized Adapter)
+Updated with KAMA, Hurst Exponent, S/R, and single-connection rate-limiting to prevent HTTP 520 errors.
 """
 
 from __future__ import annotations
@@ -68,65 +68,87 @@ class Signal:
 
 
 class DerivClient:
-    """Async WebSocket adapter for Deriv API candles with retry and timeout fix."""
+    """Optimized Deriv WebSocket adapter using a single connection per pair with rate-limiting."""
 
     def __init__(self):
         self.app_id = os.getenv("DERIV_APP_ID", "").strip()
         self.api_token = os.getenv("DERIV_API_TOKEN", "").strip()
+        self.sem = asyncio.Semaphore(2)  # Concurrent connections limit to prevent HTTP 520
 
-    async def candles(self, symbol: str, interval: str) -> List[Candle]:
+    async def fetch_timeframes(self, symbol: str) -> Tuple[List[Candle], List[Candle], List[Candle]]:
         if not self.app_id:
             raise RuntimeError("DERIV_APP_ID environment variable is missing")
 
-        gran_map = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600}
-        granularity = gran_map.get(interval, 60)
         deriv_symbol = symbol if symbol.startswith("frx") or symbol.startswith("R_") else f"frx{symbol}"
         uri = f"wss://ws.derivws.com/websockets_v3?app_id={self.app_id}"
 
+        gran_map = {"1m": 60, "5m": 300, "15m": 900}
+        timeframes = ["1m", "5m", "15m"]
+
         last_err = None
-        for attempt in range(3):
-            try:
-                async with websockets.connect(uri, open_timeout=25) as websocket:
-                    if self.api_token:
-                        await websocket.send(json.dumps({"authorize": self.api_token}))
-                        await websocket.recv()
+        async with self.sem:
+            for attempt in range(3):
+                try:
+                    async with websockets.connect(uri, open_timeout=25) as websocket:
+                        if self.api_token:
+                            await websocket.send(json.dumps({"authorize": self.api_token}))
+                            await websocket.recv()
 
-                    req = {
-                        "ticks_history": deriv_symbol,
-                        "adjust_start_time": 1,
-                        "count": CANDLE_LIMIT,
-                        "end": "latest",
-                        "granularity": granularity,
-                        "style": "candles"
-                    }
-                    await websocket.send(json.dumps(req))
-                    resp = await websocket.recv()
-                    data = json.loads(resp)
+                        # Request all 3 timeframes over the same connection
+                        for tf in timeframes:
+                            req = {
+                                "ticks_history": deriv_symbol,
+                                "adjust_start_time": 1,
+                                "count": CANDLE_LIMIT,
+                                "end": "latest",
+                                "granularity": gran_map[tf],
+                                "style": "candles"
+                            }
+                            await websocket.send(json.dumps(req))
 
-                    if "error" in data:
-                        raise RuntimeError(f"Deriv API error for {symbol}: {data['error'].get('message')}")
+                        results = {}
+                        for _ in range(len(timeframes)):
+                            resp = await websocket.recv()
+                            data = json.loads(resp)
+                            if "error" in data:
+                                continue
+                            
+                            echo_req = data.get("echo_req", {})
+                            gran = echo_req.get("granularity")
+                            tf_matched = "1m"
+                            if gran == 300:
+                                tf_matched = "5m"
+                            elif gran == 900:
+                                tf_matched = "15m"
 
-                    candles_data = data.get("candles", [])
-                    out: List[Candle] = []
-                    for row in candles_data:
-                        ts = row.get("epoch")
-                        o = float(row.get("open", 0))
-                        h = float(row.get("high", 0))
-                        l = float(row.get("low", 0))
-                        c = float(row.get("close", 0))
-                        if h < l or h < max(o, c) or l > min(o, c):
-                            continue
-                        out.append(Candle(ts, o, h, l, c, 0.0))
+                            candles_data = data.get("candles", [])
+                            out: List[Candle] = []
+                            for row in candles_data:
+                                ts = row.get("epoch")
+                                o = float(row.get("open", 0))
+                                h = float(row.get("high", 0))
+                                l = float(row.get("low", 0))
+                                c = float(row.get("close", 0))
+                                if h < l or h < max(o, c) or l > min(o, c):
+                                    continue
+                                out.append(Candle(ts, o, h, l, c, 0.0))
+                            results[tf_matched] = out
 
-                    if len(out) < 60:
-                        raise ValueError(f"{symbol} {interval}: only {len(out)} valid candles")
-                    return out
-            except Exception as exc:
-                last_err = exc
-                if attempt < 2:
-                    await asyncio.sleep(1.0 * (attempt + 1))
-        
-        raise RuntimeError(f"Failed to fetch {symbol} {interval} from Deriv: {last_err}")
+                        execution = results.get("1m", [])
+                        confirmation = results.get("5m", [])
+                        trend_data = results.get("15m", [])
+
+                        if len(execution) < 60 or len(confirmation) < 60 or len(trend_data) < 60:
+                            raise ValueError(f"{symbol}: Insufficient valid candles received")
+
+                        return execution, confirmation, trend_data
+
+                except Exception as exc:
+                    last_err = exc
+                    if attempt < 2:
+                        await asyncio.sleep(2.0 * (attempt + 1))
+
+        raise RuntimeError(f"Failed to fetch {symbol} from Deriv: {last_err}")
 
 
 def _atr(c: Sequence[Candle], period: int = 14) -> float:
@@ -357,18 +379,14 @@ def _analyse(
         timeframe=TIMEFRAMES["execution"],
         confirmations=confirmations,
         candle_time=last.timestamp,
-        notes="Rule-based research signal with Deriv WebSocket API.",
+        notes="Rule-based research signal with optimized Deriv WebSocket API.",
     )
 
 
 async def analyze_next_candle_target(pair: str) -> Optional[Dict[str, Any]]:
     client = DerivClient()
     try:
-        execution, confirmation, trend_data = await asyncio.gather(
-            client.candles(pair, TIMEFRAMES["execution"]),
-            client.candles(pair, TIMEFRAMES["confirmation"]),
-            client.candles(pair, TIMEFRAMES["trend"]),
-        )
+        execution, confirmation, trend_data = await client.fetch_timeframes(pair)
         signal = _analyse(pair, execution, confirmation, trend_data)
         if signal:
             return signal.to_dict()
