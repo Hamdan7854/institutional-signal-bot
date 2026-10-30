@@ -1,5 +1,5 @@
 """
-strategy.py — Finnhub REST API Forex Signal Scanner (EURUSD & USDJPY)
+strategy.py — OANDA V20 API Forex Signal Scanner (Multi-Pair)
 """
 
 from __future__ import annotations
@@ -16,13 +16,13 @@ import requests
 LOG = logging.getLogger("forex_strategy")
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper())
 
-# Finnhub ke mutabiq symbols
-DEFAULT_PAIRS = ["EURUSD", "USDJPY"]
+# Major aur popular Forex pairs jo OANDA par easily available hain
+DEFAULT_PAIRS = ["EURUSD", "USDJPY", "GBPUSD", "AUDUSD", "USDCAD", "EURJPY", "GBPJPY"]
 
 TIMEFRAMES = {
-    "execution": "1",    # 1 minute
-    "confirmation": "5", # 5 minutes
-    "trend": "15",       # 15 minutes
+    "execution": "M1",    # 1 minute
+    "confirmation": "M5", # 5 minutes
+    "trend": "M15",       # 15 minutes
 }
 
 MIN_SCORE = int(os.getenv("MIN_SCORE", "7"))
@@ -57,70 +57,65 @@ class Signal:
         return asdict(self)
 
 
-class FinnhubClient:
-    """Finnhub REST API client for fetching Forex candles reliably."""
+class OandaClient:
+    """OANDA V20 REST API client for fetching Forex candles reliably."""
 
     def __init__(self):
-        self.api_key = os.getenv("FINNHUB_API_KEY", "").strip()
+        self.api_key = os.getenv("OANDA_API_KEY", "").strip()
+        self.account_id = os.getenv("OANDA_ACCOUNT_ID", "").strip()
+        self.base_url = "https://api-fxpractice.oanda.com/v3"
 
-    def _fetch_candles(self, symbol: str, resolution: str) -> List[Candle]:
+    def _fetch_candles(self, symbol: str, granularity: str) -> List[Candle]:
         if not self.api_key:
-            raise RuntimeError("FINNHUB_API_KEY environment variable is missing")
+            raise RuntimeError("OANDA_API_KEY environment variable is missing")
 
-        # Finnhub symbol format (e.g., OANDA:EUR_USD)
-        finnhub_symbol = f"OANDA:{symbol[:3]}_{symbol[3:]}"
-        
-        # Last 3 days range for candles
-        to_time = int(time.time())
-        from_time = to_time - (3 * 24 * 60 * 60)
+        # OANDA symbol format (e.g., EUR_USD)
+        oanda_symbol = f"{symbol[:3]}_{symbol[3:]}"
 
-        url = "https://finnhub.io/api/v1/forex/candle"
+        url = f"{self.base_url}/instruments/{oanda_symbol}/candles"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Accept-Datetime-Format": "UNIX"
+        }
         params = {
-            "symbol": finnhub_symbol,
-            "resolution": resolution,
-            "from": from_time,
-            "to": to_time,
-            "token": self.api_key
+            "granularity": granularity,
+            "count": 100,
+            "price": "M"
         }
 
-        response = requests.get(url, params=params, timeout=10)
+        response = requests.get(url, headers=headers, params=params, timeout=10)
         if response.status_code != 200:
-            raise RuntimeError(f"Finnhub HTTP error {response.status_code}")
+            raise RuntimeError(f"OANDA HTTP error {response.status_code}: {response.text}")
 
         data = response.json()
-        if data.get("s") != "ok":
-            raise RuntimeError(f"Finnhub API returned status: {data.get('s')}")
-
-        timestamps = data.get("t", [])
-        opens = data.get("o", [])
-        highs = data.get("h", [])
-        lows = data.get("l", [])
-        closes = data.get("c", [])
+        raw_candles = data.get("candles", [])
 
         out: List[Candle] = []
-        for i in range(len(timestamps)):
+        for rc in raw_candles:
+            if not rc.get("complete", True):
+                continue
+            mid = rc.get("mid", {})
             out.append(Candle(
-                timestamp=timestamps[i],
-                open=float(opens[i]),
-                high=float(highs[i]),
-                low=float(lows[i]),
-                close=float(closes[i]),
-                volume=0.0
+                timestamp=float(rc.get("time", 0)),
+                open=float(mid.get("o", 0)),
+                high=float(mid.get("h", 0)),
+                low=float(mid.get("l", 0)),
+                close=float(mid.get("c", 0)),
+                volume=float(rc.get("volume", 0))
             ))
         return out
 
     async def fetch_timeframes(self, symbol: str) -> Tuple[List[Candle], List[Candle], List[Candle]]:
-        # Run synchronous requests in thread to keep async event loop non-blocking
         loop = asyncio.get_running_loop()
         
         execution = await loop.run_in_executor(None, self._fetch_candles, symbol, TIMEFRAMES["execution"])
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.1)
         confirmation = await loop.run_in_executor(None, self._fetch_candles, symbol, TIMEFRAMES["confirmation"])
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.1)
         trend_data = await loop.run_in_executor(None, self._fetch_candles, symbol, TIMEFRAMES["trend"])
 
         if len(execution) < 50 or len(confirmation) < 50 or len(trend_data) < 50:
-            raise ValueError(f"{symbol}: Insufficient candles from Finnhub")
+            raise ValueError(f"{symbol}: Insufficient candles from OANDA")
 
         return execution, confirmation, trend_data
 
@@ -216,7 +211,6 @@ def _analyse(
         return None
 
     htf_trend = _trend(trend_data)
-    mid_trend = _trend(confirmation)
     sweep = _liquidity_sweep(execution)
     if not sweep:
         return None
@@ -286,19 +280,19 @@ def _analyse(
         timeframe="1m",
         confirmations=confirmations,
         candle_time=last.timestamp,
-        notes="Finnhub REST API stable signal.",
+        notes="OANDA API multi-pair stable signal.",
     )
 
 
 async def analyze_next_candle_target(pair: str) -> Optional[Dict[str, Any]]:
-    client = FinnhubClient()
+    client = OandaClient()
     try:
         execution, confirmation, trend_data = await client.fetch_timeframes(pair)
         signal = _analyse(pair, execution, confirmation, trend_data)
         if signal:
             return signal.to_dict()
     except Exception as exc:
-        LOG.exception("Finnhub analysis failed for %s: %s", pair, exc)
+        LOG.exception("OANDA analysis failed for %s: %s", pair, exc)
     return None
 
 
