@@ -40,10 +40,16 @@ async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         signals_sent += 1
         factors_str = "\n• ".join(s['confirmations'])
         
+        # Color & Emoji for Direction
+        if s['direction'] == "BUY":
+            direction_str = "🟢 BUY"
+        else:
+            direction_str = "🔴 SELL"
+        
         msg = (
             f"🎯 *PRECISION SIGNAL MATCH* 🎯\n\n"
             f"🔤 *Pair:* `{s['pair']}`\n"
-            f"📈 *Direction:* {s['direction']}\n"
+            f"📈 *Direction:* {direction_str}\n"
             f"📍 *Entry Price:* `{s['entry']}`\n"
             f"🛑 *Stop Loss:* `{s['stop_loss']}`\n"
             f"🎯 *Target:* `{s['target']}`\n\n"
