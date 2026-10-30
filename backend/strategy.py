@@ -1,39 +1,6 @@
 """
 strategy.py — Async multi-pair Forex signal scanner (DataDriv adapter)
 Updated with KAMA, Hurst Exponent, Ranging Support/Resistance, and analyze_next_candle_target
-
-IMPORTANT
----------
-This is a research/backtesting scaffold, NOT a validated profitable strategy.
-Do not use with real money until you have:
-  1) matched DataDriv's exact endpoint, authentication and JSON schema;
-  2) verified candle timestamps/prices against your broker;
-  3) backtested with spread, slippage and out-of-sample data; and
-  4) forward-tested on demo.
-
-Install:
-    pip install aiohttp
-
-Required environment variables:
-    DATADRIV_API_URL       Full candle endpoint URL
-    DATADRIV_API_KEY       API key (if required)
-Optional:
-    DATADRIV_API_KEY_HEADER  default: Authorization
-    DATADRIV_API_KEY_PREFIX default: Bearer
-    DATADRIV_SYMBOL_PARAM   default: symbol
-    DATADRIV_INTERVAL_PARAM default: interval
-    DATADRIV_LIMIT_PARAM    default: limit
-    DATADRIV_API_KEY_PARAM  If set, sends key as a query parameter instead
-    DATADRIV_CANDLES_PATH   Optional dotted path to candle array, e.g. data.candles
-    PAIRS                   Comma-separated symbols
-    REQUEST_TIMEOUT        default 12 seconds
-    MAX_CONCURRENCY        default 12
-    CANDLE_LIMIT           default 300
-    MIN_SCORE              default 7
-    MIN_RR                  default 1.5
-
-The DataDriv endpoint and payload vary by account/API version. Configure the
-adapter below to match the documentation. No API credentials are hard-coded.
 """
 
 from __future__ import annotations
@@ -61,8 +28,6 @@ PAIRS = [p.strip().upper() for p in os.getenv(
     "PAIRS", ",".join(DEFAULT_PAIRS)
 ).split(",") if p.strip()]
 
-# Execution timeframe is used for setup detection. Higher timeframes are
-# fetched separately for directional context.
 TIMEFRAMES = {
     "execution": os.getenv("EXECUTION_TIMEFRAME", "1m"),
     "confirmation": os.getenv("CONFIRMATION_TIMEFRAME", "5m"),
@@ -126,22 +91,17 @@ def _number(row: dict, names: Sequence[str], default: Optional[float] = None):
 
 
 def normalize_candles(payload: Any) -> List[Candle]:
-    """Normalize common OHLC JSON shapes. Adapt this if DataDriv differs."""
     path = os.getenv("DATADRIV_CANDLES_PATH", "").strip()
     rows = _get_nested(payload, path) if path else payload
 
     if isinstance(rows, dict):
-        # Common wrappers
         for key in ("candles", "data", "results", "items", "prices"):
             if isinstance(rows.get(key), list):
                 rows = rows[key]
                 break
 
     if not isinstance(rows, list):
-        raise ValueError(
-            "Could not locate candle list in DataDriv response. "
-            "Set DATADRIV_CANDLES_PATH or edit normalize_candles()."
-        )
+        raise ValueError("Could not locate candle list in DataDriv response.")
 
     out: List[Candle] = []
     for row in rows:
@@ -167,8 +127,6 @@ def normalize_candles(payload: Any) -> List[Candle]:
 
 
 class DataDrivClient:
-    """Small async adapter. Match params/headers to your DataDriv API docs."""
-
     def __init__(self, session: aiohttp.ClientSession):
         self.session = session
         self.url = os.getenv("DATADRIV_API_URL", "").strip()
@@ -205,16 +163,12 @@ class DataDrivClient:
                     ) as response:
                         if response.status == 429 or response.status >= 500:
                             body = await response.text()
-                            raise RuntimeError(
-                                f"DataDriv HTTP {response.status}: {body[:200]}"
-                            )
+                            raise RuntimeError(f"DataDriv HTTP {response.status}: {body[:200]}")
                         response.raise_for_status()
                         payload = await response.json(content_type=None)
                         candles = normalize_candles(payload)
                         if len(candles) < 60:
-                            raise ValueError(
-                                f"{symbol} {interval}: only {len(candles)} valid candles"
-                            )
+                            raise ValueError(f"{symbol} {interval}: only {len(candles)} valid candles")
                         return candles
                 except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError) as exc:
                     last_error = exc
@@ -229,47 +183,31 @@ def _atr(c: Sequence[Candle], period: int = 14) -> float:
     trs = []
     for i in range(1, len(c)):
         prev = c[i - 1].close
-        trs.append(max(
-            c[i].high - c[i].low,
-            abs(c[i].high - prev),
-            abs(c[i].low - prev),
-        ))
+        trs.append(max(c[i].high - c[i].low, abs(c[i].high - prev), abs(c[i].low - prev)))
     if not trs:
         return 0.0
     return sum(trs[-period:]) / min(period, len(trs))
 
 
 def _kama(c: Sequence[Candle], period: int = 10, fast_end: float = 2.0 / 3.0, slow_end: float = 2.0 / 31.0) -> Optional[float]:
-    """Calculates Kaufman's Adaptive Moving Average (KAMA) for the latest sequence."""
     if len(c) < period + 1:
         return None
     closes = [x.close for x in c]
-    
     kama_values = [sum(closes[:period]) / period]
-    
     for i in range(period, len(closes)):
         change = abs(closes[i] - closes[i - period])
         volatility = sum(abs(closes[j] - closes[j - 1]) for j in range(i - period + 1, i + 1))
-        
-        if volatility == 0:
-            er = 0.0
-        else:
-            er = change / volatility
-            
+        er = 0.0 if volatility == 0 else change / volatility
         sc = (er * (fast_end - slow_end) + slow_end) ** 2
         prev_kama = kama_values[-1]
-        current_kama = prev_kama + sc * (closes[i] - prev_kama)
-        kama_values.append(current_kama)
-        
+        kama_values.append(prev_kama + sc * (closes[i] - prev_kama))
     return kama_values[-1] if kama_values else None
 
 
 def _hurst_exponent(c: Sequence[Candle], max_lag: int = 20) -> float:
-    """Calculates Hurst Exponent to classify market regime (Mean-Reverting vs Trending)."""
     closes = [x.close for x in c]
     if len(closes) < max_lag * 2:
         return 0.5
-    
     lags = range(2, max_lag)
     tau = []
     for lag in lags:
@@ -277,69 +215,51 @@ def _hurst_exponent(c: Sequence[Candle], max_lag: int = 20) -> float:
         if not diffs:
             continue
         variance = sum((d - (sum(diffs)/len(diffs))) ** 2 for d in diffs) / len(diffs)
-        stdev = math.sqrt(variance) if variance > 0 else 1e-8
-        tau.append(stdev)
-        
+        tau.append(math.sqrt(variance) if variance > 0 else 1e-8)
     if len(tau) < 2:
         return 0.5
-        
     log_lags = [math.log(l) for l in lags[:len(tau)]]
     log_tau = [math.log(t) if t > 0 else 0 for t in tau]
-    
     n = len(log_lags)
     sum_x = sum(log_lags)
     sum_y = sum(log_tau)
     sum_xy = sum(x * y for x, y in zip(log_lags, log_tau))
     sum_xx = sum(x * x for x in log_lags)
-    
     denominator = (n * sum_xx - sum_x ** 2)
     if denominator == 0:
         return 0.5
-        
-    hurst = (n * sum_xy - sum_x * sum_y) / denominator
-    return float(hurst)
+    return float((n * sum_xy - sum_x * sum_y) / denominator)
 
 
 def _support_resistance_zones(c: Sequence[Candle], lookback: int = 50) -> Tuple[Optional[float], Optional[float]]:
-    """Identifies ranging local Support and Resistance zones based on recent swing boundaries."""
     if len(c) < lookback:
         return None, None
     recent = c[-lookback:]
-    resistance = max(x.high for x in recent)
-    support = min(x.low for x in recent)
-    return support, resistance
+    return min(x.low for x in recent), max(x.high for x in recent)
 
 
 def _swings(c: Sequence[Candle], left: int = 2, right: int = 2):
     highs, lows = [], []
     for i in range(left, len(c) - right):
-        if all(c[i].high > c[j].high for j in range(i-left, i)) and \
-           all(c[i].high >= c[j].high for j in range(i+1, i+right+1)):
+        if all(c[i].high > c[j].high for j in range(i-left, i)) and all(c[i].high >= c[j].high for j in range(i+1, i+right+1)):
             highs.append((i, c[i].high))
-        if all(c[i].low < c[j].low for j in range(i-left, i)) and \
-           all(c[i].low <= c[j].low for j in range(i+1, i+right+1)):
+        if all(c[i].low < c[j].low for j in range(i-left, i)) and all(c[i].low <= c[j].low for j in range(i+1, i+right+1)):
             lows.append((i, c[i].low))
     return highs, lows
 
 
 def _trend(c: Sequence[Candle]) -> str:
-    """Simple structure trend from last two confirmed swing highs/lows."""
     highs, lows = _swings(c[-100:])
     if len(highs) < 2 or len(lows) < 2:
         return "NEUTRAL"
-    hh = highs[-1][1] > highs[-2][1]
-    hl = lows[-1][1] > lows[-2][1]
-    lh = highs[-1][1] < highs[-2][1]
-    ll = lows[-1][1] < lows[-2][1]
-    if hh and hl:
+    if highs[-1][1] > highs[-2][1] and lows[-1][1] > lows[-2][1]:
         return "BULLISH"
-    if lh and ll:
+    if highs[-1][1] < highs[-2][1] and lows[-1][1] < lows[-2][1]:
         return "BEARISH"
     return "NEUTRAL"
 
 
 def _liquidity_sweep(c: Sequence[Candle], lookback: int = 20):
-    """Sweep = wick beyond prior range followed by close back inside."""
     if len(c) < lookback + 2:
         return None
     last = c[-1]
@@ -354,7 +274,6 @@ def _liquidity_sweep(c: Sequence[Candle], lookback: int = 20):
 
 
 def _mss(c: Sequence[Candle], direction: str, lookback: int = 20) -> bool:
-    """Close beyond recent local structure in direction of the setup."""
     recent = c[-lookback-1:-1]
     if not recent:
         return False
@@ -364,7 +283,6 @@ def _mss(c: Sequence[Candle], direction: str, lookback: int = 20) -> bool:
 
 
 def _fvg(c: Sequence[Candle], direction: str):
-    """Three-candle fair value gap; returns latest zone or None."""
     for i in range(len(c) - 1, max(1, len(c) - 12), -1):
         first, third = c[i - 2], c[i]
         if direction == "CALL" and first.high < third.low:
@@ -375,10 +293,6 @@ def _fvg(c: Sequence[Candle], direction: str):
 
 
 def _approx_volume_profile(c: Sequence[Candle], bins: int = 24):
-    """
-    Tick-volume approximation, not exchange-traded volume.
-    Allocates each candle's volume to its typical price bin.
-    """
     lo = min(x.low for x in c)
     hi = max(x.high for x in c)
     if hi <= lo:
@@ -438,7 +352,6 @@ def _analyse(
     ]
     score = 3
 
-    # KAMA FILTER
     kama_val = _kama(execution)
     if kama_val is not None:
         confirmations.append(f"KAMA level: {kama_val:.5f}")
@@ -447,7 +360,6 @@ def _analyse(
         elif direction == "PUT" and last.close < kama_val:
             score += 1
 
-    # HURST EXPONENT REGIME FILTER
     hurst = _hurst_exponent(execution)
     confirmations.append(f"Hurst Exponent: {hurst:.2f}")
     if hurst < 0.5:
@@ -455,7 +367,6 @@ def _analyse(
     elif hurst > 0.55:
         score += 1
 
-    # RANGING SUPPORT / RESISTANCE ZONES
     sup, res = _support_resistance_zones(execution)
     if sup is not None and res is not None:
         if direction == "CALL" and abs(last.low - sup) <= atr * 0.75:
@@ -472,31 +383,21 @@ def _analyse(
 
     poc = _approx_volume_profile(execution[-100:])
     if poc is not None:
-        distance = abs(last.close - poc)
-        if distance <= atr * 0.75:
+        if abs(last.close - poc) <= atr * 0.75:
             confirmations.append(f"Approx. tick-volume POC confluence {poc:.5f}")
             score += 1
 
     body = abs(last.close - last.open)
-    if body >= atr * 0.5 and (
-        (direction == "CALL" and last.close > last.open) or
-        (direction == "PUT" and last.close < last.open)
-    ):
+    if body >= atr * 0.5 and ((direction == "CALL" and last.close > last.open) or (direction == "PUT" and last.close < last.open)):
         confirmations.append("Directional displacement")
         score += 1
 
     recent = execution[-8:-1]
-    ob = None
     for candle in reversed(recent):
-        if direction == "CALL" and candle.close < candle.open:
-            ob = candle
+        if (direction == "CALL" and candle.close < candle.open) or (direction == "PUT" and candle.close > candle.open):
+            confirmations.append("Recent opposite-candle order-block proxy")
+            score += 1
             break
-        if direction == "PUT" and candle.close > candle.open:
-            ob = candle
-            break
-    if ob:
-        confirmations.append("Recent opposite-candle order-block proxy")
-        score += 1
 
     if score < MIN_SCORE:
         return None
@@ -529,113 +430,51 @@ def _analyse(
         timeframe=TIMEFRAMES["execution"],
         confirmations=confirmations,
         candle_time=last.timestamp,
-        notes=(
-            "Rule-based research signal with KAMA, Hurst & S/R. Tick-volume profile is approximate; "
-            "broker spread, slippage and feed alignment are not included."
-        ),
+        notes="Rule-based research signal with KAMA, Hurst & S/R.",
     )
 
 
-def analyze_next_candle_target(
-    pair: str,
-    execution: Sequence[Candle],
-    confirmation: Sequence[Candle],
-    trend_data: Sequence[Candle]
-) -> Optional[Dict[str, Any]]:
+async def analyze_next_candle_target(pair: str) -> Optional[Dict[str, Any]]:
     """
-    Wrapper function matching main.py import expectations to analyze candles and return signal dictionary.
+    Asynchronous helper called by main.py to fetch and analyze a pair across timeframes.
     """
-    signal = _analyse(pair, execution, confirmation, trend_data)
-    if signal:
-        return signal.to_dict()
+    connector = aiohttp.TCPConnector(limit=1, ttl_dns_cache=300)
+    async with aiohttp.ClientSession(connector=connector) as session:
+        client = DataDrivClient(session)
+        try:
+            execution, confirmation, trend_data = await asyncio.gather(
+                client.candles(pair, TIMEFRAMES["execution"]),
+                client.candles(pair, TIMEFRAMES["confirmation"]),
+                client.candles(pair, TIMEFRAMES["trend"]),
+            )
+            signal = _analyse(pair, execution, confirmation, trend_data)
+            if signal:
+                return signal.to_dict()
+        except Exception as exc:
+            LOG.exception("Analysis failed for %s", pair)
     return None
-
-
-async def scan_pair(client: DataDrivClient, pair: str) -> Tuple[str, Optional[Signal], Optional[str]]:
-    """Fetch this pair's timeframes concurrently."""
-    try:
-        execution, confirmation, trend_data = await asyncio.gather(
-            client.candles(pair, TIMEFRAMES["execution"]),
-            client.candles(pair, TIMEFRAMES["confirmation"]),
-            client.candles(pair, TIMEFRAMES["trend"]),
-        )
-        signal = _analyse(pair, execution, confirmation, trend_data)
-        return pair, signal, None
-    except Exception as exc:
-        LOG.exception("Scan failed for %s", pair)
-        return pair, None, str(exc)
 
 
 async def scan_all(pairs: Optional[Iterable[str]] = None) -> Dict[str, Any]:
     selected = [p.upper().strip() for p in (pairs or PAIRS) if p.strip()]
     started = time.perf_counter()
-    connector = aiohttp.TCPConnector(limit=MAX_CONCURRENCY, ttl_dns_cache=300)
-    async with aiohttp.ClientSession(connector=connector) as session:
-        client = DataDrivClient(session)
-        results = await asyncio.gather(
-            *(scan_pair(client, pair) for pair in selected),
-            return_exceptions=True,
-        )
+    tasks = [analyze_next_candle_target(pair) for pair in selected]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    signals: List[Signal] = []
-    errors: Dict[str, str] = {}
-    for pair, result in zip(selected, results):
-        if isinstance(result, Exception):
-            errors[pair] = str(result)
-            continue
-        result_pair, signal, error = result
-        if error:
-            errors[result_pair] = error
-        elif signal:
-            signals.append(signal)
+    signals = []
+    errors = {}
+    for pair, res in zip(selected, results):
+        if isinstance(res, Exception):
+            errors[pair] = str(res)
+        elif res:
+            signals.append(res)
 
-    signals.sort(key=lambda x: x.score, reverse=True)
+    signals.sort(key=lambda x: x["score"], reverse=True)
     return {
-        "signals": [s.to_dict() for s in signals],
+        "signals": signals,
         "errors": errors,
         "scanned": len(selected),
         "signal_count": len(signals),
         "elapsed_seconds": round(time.perf_counter() - started, 3),
         "status": "OK" if not errors else "PARTIAL",
     }
-
-
-def format_telegram(result: Dict[str, Any]) -> str:
-    signals = result.get("signals", [])
-    lines = [
-        "📊 FOREX SIGNAL SCAN (KAMA + Hurst + S/R)",
-        f"Pairs scanned: {result.get('scanned', 0)}",
-        f"Scan time: {result.get('elapsed_seconds', 0)} sec",
-        "",
-    ]
-    if not signals:
-        lines.append("NO TRADE — No setup met the configured confirmation filters.")
-    else:
-        for s in signals[:5]:
-            emoji = "🟢" if s["direction"] == "CALL" else "🔴"
-            lines.extend([
-                f"{emoji} {s['pair']} — {s['direction']}",
-                f"Entry: {s['entry']}",
-                f"Stop: {s['stop_loss']}",
-                f"Target: {s['target']}",
-                f"Score: {s['score']} | R:R {s['risk_reward']}",
-                "Confirmations: " + ", ".join(s["confirmations"]),
-                "",
-            ])
-    if result.get("errors"):
-        lines.append(f"⚠️ Data errors: {len(result['errors'])} pair(s).")
-    lines.extend([
-        "",
-        "⚠️ Research signal only; not a guarantee. Verify broker feed, spread and execution.",
-    ])
-    return "\n".join(lines)
-
-
-if __name__ == "__main__":
-    async def _main():
-        result = await scan_all()
-        print(json.dumps(result, indent=2))
-        print()
-        print(format_telegram(result))
-
-    asyncio.run(_main())
