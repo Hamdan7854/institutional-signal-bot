@@ -1,5 +1,5 @@
 """
-strategy.py — Dual-Condition ICT/SMC & Quantitative Forex Signal Scanner
+strategy.py — Dual-Condition ICT/SMC & Quantitative Forex Signal Scanner (Golden Limits Applied)
 """
 
 from __future__ import annotations
@@ -243,7 +243,7 @@ def _support_resistance_zones(c: Sequence[Candle], lookback: int = 50) -> Tuple[
     return sup, res
 
 
-# --- Main Strategy Logic with Dual-Condition Grouping ---
+# --- Main Strategy Logic with Dual-Condition Grouping & Golden Limits ---
 
 def _analyse(
     pair: str,
@@ -272,30 +272,33 @@ def _analyse(
     poc, _, _ = _volume_profile(execution)
     vp_passed = abs(last.close - poc) <= atr * 2.0
 
-    # Group 1 triggers if at least 2 out of 4 SMC/Volume checks are met
     smc_score = sum([sweep_passed, mss_passed, smc_passed, vp_passed])
     condition_1_met = (smc_score >= 2)
 
-    # --- CONDITION GROUP 2: Hurst, S/R, KAMA, ATR ---
+    # --- CONDITION GROUP 2: Golden Limits (Hurst, S/R, KAMA, ATR) ---
+    # 1. Hurst Exponent Threshold (>= 0.55 for solid trend persistence)
     hurst_val = _hurst_exponent(execution)
-    hurst_passed = (hurst_val > 0.48)
+    hurst_passed = (hurst_val >= 0.55)
 
+    # 2. Support & Resistance Confluence Zone (Exact bounce zone within 1.0 * ATR)
     sup, res = _support_resistance_zones(execution)
     sr_passed = False
-    if direction == "CALL" and abs(last.low - sup) <= atr * 1.5:
+    if direction == "CALL" and abs(last.low - sup) <= atr * 1.0:
         sr_passed = True
-    elif direction == "PUT" and abs(last.high - res) <= atr * 1.5:
+    elif direction == "PUT" and abs(last.high - res) <= atr * 1.0:
         sr_passed = True
 
+    # 3. KAMA Distance (Price within 1.5 * ATR of KAMA level)
     kama_val = _kama(execution)
     kama_passed = False
-    if kama_val is not None:
+    if kama_val is not None and abs(last.close - kama_val) <= atr * 1.5:
         if direction == "CALL" and last.close >= kama_val:
             kama_passed = True
         elif direction == "PUT" and last.close <= kama_val:
             kama_passed = True
 
-    atr_passed = (atr > 0.00002)
+    # 4. ATR Volatility Golden Range (0.00008 to 0.00025)
+    atr_passed = (0.00008 <= atr <= 0.00025)
 
     quant_score = sum([hurst_passed, sr_passed, kama_passed, atr_passed])
     condition_2_met = (quant_score >= 2)
@@ -310,7 +313,7 @@ def _analyse(
     elif condition_1_met:
         match_reason = "⚡ Condition 1 (ICT/SMC & Volume Profile) Matched"
     else:
-        match_reason = "📊 Condition 2 (Hurst, S/R, KAMA, ATR) Matched"
+        match_reason = "📊 Condition 2 (Golden Limits Quant) Matched"
 
     confirmations.append(match_reason)
     if sweep_passed: confirmations.append("✔ SMC Liquidity Sweep Confirmed")
@@ -324,7 +327,7 @@ def _analyse(
 
     total_matched = smc_score + quant_score
     confidence_score = int((total_matched / 8) * 100)
-    confidence_score = max(50, min(confidence_score, 98)) # Realistic display
+    confidence_score = max(50, min(confidence_score, 98))
 
     # 5-Decimal Calculations for Next Candle Target
     entry = round(float(last.close), 5)
