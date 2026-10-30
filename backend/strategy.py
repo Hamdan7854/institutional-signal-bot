@@ -1,6 +1,5 @@
 """
-strategy.py — Async multi-pair Forex signal scanner (Deriv WebSocket Optimized Adapter)
-Updated with KAMA, Hurst Exponent, S/R, and single-connection rate-limiting to prevent HTTP 520 errors.
+strategy.py — Async multi-pair Forex signal scanner (Deriv WebSocket Safe Rate-Limited Adapter)
 """
 
 from __future__ import annotations
@@ -68,12 +67,41 @@ class Signal:
 
 
 class DerivClient:
-    """Optimized Deriv WebSocket adapter using a single connection per pair with rate-limiting."""
+    """Safe Deriv WebSocket adapter fetching timeframes one by one to avoid HTTP 520 errors."""
 
     def __init__(self):
         self.app_id = os.getenv("DERIV_APP_ID", "").strip()
         self.api_token = os.getenv("DERIV_API_TOKEN", "").strip()
-        self.sem = asyncio.Semaphore(2)  # Concurrent connections limit to prevent HTTP 520
+        self.sem = asyncio.Semaphore(1)  # Ek waqt mein sirf ek connection chalega taake server load na le
+
+    async def _fetch_single_tf(self, websocket, deriv_symbol: str, granularity: int) -> List[Candle]:
+        req = {
+            "ticks_history": deriv_symbol,
+            "adjust_start_time": 1,
+            "count": CANDLE_LIMIT,
+            "end": "latest",
+            "granularity": granularity,
+            "style": "candles"
+        }
+        await websocket.send(json.dumps(req))
+        resp = await websocket.recv()
+        data = json.loads(resp)
+
+        if "error" in data:
+            raise RuntimeError(f"Deriv API error: {data['error'].get('message')}")
+
+        candles_data = data.get("candles", [])
+        out: List[Candle] = []
+        for row in candles_data:
+            ts = row.get("epoch")
+            o = float(row.get("open", 0))
+            h = float(row.get("high", 0))
+            l = float(row.get("low", 0))
+            c = float(row.get("close", 0))
+            if h < l or h < max(o, c) or l > min(o, c):
+                continue
+            out.append(Candle(ts, o, h, l, c, 0.0))
+        return out
 
     async def fetch_timeframes(self, symbol: str) -> Tuple[List[Candle], List[Candle], List[Candle]]:
         if not self.app_id:
@@ -82,11 +110,14 @@ class DerivClient:
         deriv_symbol = symbol if symbol.startswith("frx") or symbol.startswith("R_") else f"frx{symbol}"
         uri = f"wss://ws.derivws.com/websockets_v3?app_id={self.app_id}"
 
-        gran_map = {"1m": 60, "5m": 300, "15m": 900}
-        timeframes = ["1m", "5m", "15m"]
+        gran_map = {
+            "1m": 60,
+            "5m": 300,
+            "15m": 900
+        }
 
-        last_err = None
         async with self.sem:
+            last_err = None
             for attempt in range(3):
                 try:
                     async with websockets.connect(uri, open_timeout=25) as websocket:
@@ -94,49 +125,11 @@ class DerivClient:
                             await websocket.send(json.dumps({"authorize": self.api_token}))
                             await websocket.recv()
 
-                        # Request all 3 timeframes over the same connection
-                        for tf in timeframes:
-                            req = {
-                                "ticks_history": deriv_symbol,
-                                "adjust_start_time": 1,
-                                "count": CANDLE_LIMIT,
-                                "end": "latest",
-                                "granularity": gran_map[tf],
-                                "style": "candles"
-                            }
-                            await websocket.send(json.dumps(req))
-
-                        results = {}
-                        for _ in range(len(timeframes)):
-                            resp = await websocket.recv()
-                            data = json.loads(resp)
-                            if "error" in data:
-                                continue
-                            
-                            echo_req = data.get("echo_req", {})
-                            gran = echo_req.get("granularity")
-                            tf_matched = "1m"
-                            if gran == 300:
-                                tf_matched = "5m"
-                            elif gran == 900:
-                                tf_matched = "15m"
-
-                            candles_data = data.get("candles", [])
-                            out: List[Candle] = []
-                            for row in candles_data:
-                                ts = row.get("epoch")
-                                o = float(row.get("open", 0))
-                                h = float(row.get("high", 0))
-                                l = float(row.get("low", 0))
-                                c = float(row.get("close", 0))
-                                if h < l or h < max(o, c) or l > min(o, c):
-                                    continue
-                                out.append(Candle(ts, o, h, l, c, 0.0))
-                            results[tf_matched] = out
-
-                        execution = results.get("1m", [])
-                        confirmation = results.get("5m", [])
-                        trend_data = results.get("15m", [])
+                        execution = await self._fetch_single_tf(websocket, deriv_symbol, gran_map["1m"])
+                        await asyncio.sleep(0.3)
+                        confirmation = await self._fetch_single_tf(websocket, deriv_symbol, gran_map["5m"])
+                        await asyncio.sleep(0.3)
+                        trend_data = await self._fetch_single_tf(websocket, deriv_symbol, gran_map["15m"])
 
                         if len(execution) < 60 or len(confirmation) < 60 or len(trend_data) < 60:
                             raise ValueError(f"{symbol}: Insufficient valid candles received")
@@ -146,7 +139,7 @@ class DerivClient:
                 except Exception as exc:
                     last_err = exc
                     if attempt < 2:
-                        await asyncio.sleep(2.0 * (attempt + 1))
+                        await asyncio.sleep(1.5 * (attempt + 1))
 
         raise RuntimeError(f"Failed to fetch {symbol} from Deriv: {last_err}")
 
@@ -379,7 +372,7 @@ def _analyse(
         timeframe=TIMEFRAMES["execution"],
         confirmations=confirmations,
         candle_time=last.timestamp,
-        notes="Rule-based research signal with optimized Deriv WebSocket API.",
+        notes="Rule-based research signal with safe Deriv WebSocket API.",
     )
 
 
@@ -398,16 +391,15 @@ async def analyze_next_candle_target(pair: str) -> Optional[Dict[str, Any]]:
 async def scan_all(pairs: Optional[Iterable[str]] = None) -> Dict[str, Any]:
     selected = [p.upper().strip() for p in (pairs or PAIRS) if p.strip()]
     started = time.perf_counter()
-    tasks = [analyze_next_candle_target(pair) for pair in selected]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
+    
+    # Pairs ko aik aik kar ke ya controlled flow mein run karna taake HTTP 520 error na aaye
     signals = []
     errors = {}
-    for pair, res in zip(selected, results):
-        if isinstance(res, Exception):
-            errors[pair] = str(res)
-        elif res:
+    for pair in selected:
+        res = await analyze_next_candle_target(pair)
+        if res:
             signals.append(res)
+        await asyncio.sleep(0.5)  # Har pair ke darmiyan chota sa pause
 
     signals.sort(key=lambda x: x["score"], reverse=True)
     return {
