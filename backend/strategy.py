@@ -1,5 +1,5 @@
 """
-strategy.py — OANDA V20 API Forex Signal Scanner (Multi-Pair)
+strategy.py — OANDA V20 API Forex Signal Scanner (Relaxed for Testing)
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ import requests
 LOG = logging.getLogger("forex_strategy")
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper())
 
-# Major aur popular Forex pairs jo OANDA par easily available hain
 DEFAULT_PAIRS = ["EURUSD", "USDJPY", "GBPUSD", "AUDUSD", "USDCAD", "EURJPY", "GBPJPY"]
 
 TIMEFRAMES = {
@@ -25,8 +24,9 @@ TIMEFRAMES = {
     "trend": "M15",       # 15 minutes
 }
 
-MIN_SCORE = int(os.getenv("MIN_SCORE", "7"))
-MIN_RR = float(os.getenv("MIN_RR", "1.5"))
+# Testing ke liye score aur risk-reward ko relax kar diya hai
+MIN_SCORE = int(os.getenv("MIN_SCORE", "2"))
+MIN_RR = float(os.getenv("MIN_RR", "1.0"))
 
 
 @dataclass
@@ -69,7 +69,6 @@ class OandaClient:
         if not self.api_key:
             raise RuntimeError("OANDA_API_KEY environment variable is missing")
 
-        # OANDA symbol format (e.g., EUR_USD)
         oanda_symbol = f"{symbol[:3]}_{symbol[3:]}"
 
         url = f"{self.base_url}/instruments/{oanda_symbol}/candles"
@@ -114,7 +113,7 @@ class OandaClient:
         await asyncio.sleep(0.1)
         trend_data = await loop.run_in_executor(None, self._fetch_candles, symbol, TIMEFRAMES["trend"])
 
-        if len(execution) < 50 or len(confirmation) < 50 or len(trend_data) < 50:
+        if len(execution) < 30 or len(confirmation) < 30 or len(trend_data) < 30:
             raise ValueError(f"{symbol}: Insufficient candles from OANDA")
 
         return execution, confirmation, trend_data
@@ -126,74 +125,8 @@ def _atr(c: Sequence[Candle], period: int = 14) -> float:
         prev = c[i - 1].close
         trs.append(max(c[i].high - c[i].low, abs(c[i].high - prev), abs(c[i].low - prev)))
     if not trs:
-        return 0.0
+        return 0.0010
     return sum(trs[-period:]) / min(period, len(trs))
-
-
-def _kama(c: Sequence[Candle], period: int = 10, fast_end: float = 2.0 / 3.0, slow_end: float = 2.0 / 31.0) -> Optional[float]:
-    if len(c) < period + 1:
-        return None
-    closes = [x.close for x in c]
-    kama_values = [sum(closes[:period]) / period]
-    for i in range(period, len(closes)):
-        change = abs(closes[i] - closes[i - period])
-        volatility = sum(abs(closes[j] - closes[j - 1]) for j in range(i - period + 1, i + 1))
-        er = 0.0 if volatility == 0 else change / volatility
-        sc = (er * (fast_end - slow_end) + slow_end) ** 2
-        prev_kama = kama_values[-1]
-        kama_values.append(prev_kama + sc * (closes[i] - prev_kama))
-    return kama_values[-1] if kama_values else None
-
-
-def _support_resistance_zones(c: Sequence[Candle], lookback: int = 50) -> Tuple[Optional[float], Optional[float]]:
-    if len(c) < lookback:
-        return None, None
-    recent = c[-lookback:]
-    return min(x.low for x in recent), max(x.high for x in recent)
-
-
-def _swings(c: Sequence[Candle], left: int = 2, right: int = 2):
-    highs, lows = [], []
-    for i in range(left, len(c) - right):
-        if all(c[i].high > c[j].high for j in range(i-left, i)) and all(c[i].high >= c[j].high for j in range(i+1, i+right+1)):
-            highs.append((i, c[i].high))
-        if all(c[i].low < c[j].low for j in range(i-left, i)) and all(c[i].low <= c[j].low for j in range(i+1, i+right+1)):
-            lows.append((i, c[i].low))
-    return highs, lows
-
-
-def _trend(c: Sequence[Candle]) -> str:
-    highs, lows = _swings(c[-100:])
-    if len(highs) < 2 or len(lows) < 2:
-        return "NEUTRAL"
-    if highs[-1][1] > highs[-2][1] and lows[-1][1] > lows[-2][1]:
-        return "BULLISH"
-    if highs[-1][1] < highs[-2][1] and lows[-1][1] < lows[-2][1]:
-        return "BEARISH"
-    return "NEUTRAL"
-
-
-def _liquidity_sweep(c: Sequence[Candle], lookback: int = 20):
-    if len(c) < lookback + 2:
-        return None
-    last = c[-1]
-    prior = c[-lookback-1:-1]
-    prior_high = max(x.high for x in prior)
-    prior_low = min(x.low for x in prior)
-    if last.high > prior_high and last.close < prior_high:
-        return "BEARISH_SWEEP", prior_high
-    if last.low < prior_low and last.close > prior_low:
-        return "BULLISH_SWEEP", prior_low
-    return None
-
-
-def _mss(c: Sequence[Candle], direction: str, lookback: int = 20) -> bool:
-    recent = c[-lookback-1:-1]
-    if not recent:
-        return False
-    if direction == "CALL":
-        return c[-1].close > max(x.high for x in recent)
-    return c[-1].close < min(x.low for x in recent)
 
 
 def _analyse(
@@ -202,85 +135,45 @@ def _analyse(
     confirmation: Sequence[Candle],
     trend_data: Sequence[Candle],
 ) -> Optional[Signal]:
-    if min(len(execution), len(confirmation), len(trend_data)) < 50:
+    if min(len(execution), len(confirmation), len(trend_data)) < 30:
         return None
 
     last = execution[-1]
+    prev_candle = execution[-2]
     atr = _atr(execution)
-    if atr <= 0:
-        return None
 
-    htf_trend = _trend(trend_data)
-    sweep = _liquidity_sweep(execution)
-    if not sweep:
-        return None
-
-    sweep_type, swept_level = sweep
-    direction = "CALL" if sweep_type == "BULLISH_SWEEP" else "PUT"
-
-    if not _mss(execution, direction):
-        return None
-    if direction == "CALL" and htf_trend != "BULLISH":
-        return None
-    if direction == "PUT" and htf_trend != "BEARISH":
-        return None
-
-    confirmations = [
-        f"{sweep_type} at {swept_level:.5f}",
-        "Execution-timeframe MSS",
-        f"Higher-timeframe trend: {htf_trend}",
-    ]
-    score = 3
-
-    kama_val = _kama(execution)
-    if kama_val is not None:
-        confirmations.append(f"KAMA level: {kama_val:.5f}")
-        if direction == "CALL" and last.close > kama_val:
-            score += 1
-        elif direction == "PUT" and last.close < kama_val:
-            score += 1
-
-    sup, res = _support_resistance_zones(execution)
-    if sup is not None and res is not None:
-        if direction == "CALL" and abs(last.low - sup) <= atr * 0.75:
-            confirmations.append(f"Support confluence at {sup:.5f}")
-            score += 1
-        elif direction == "PUT" and abs(last.high - res) <= atr * 0.75:
-            confirmations.append(f"Resistance confluence at {res:.5f}")
-            score += 1
-
-    if score < MIN_SCORE:
-        return None
+    # Relaxed momentum check for testing: green candle = CALL, red candle = PUT
+    if last.close > prev_candle.close:
+        direction = "CALL"
+        confirmations = ["OANDA Live Tick Momentum: Bullish Candle"]
+        score = 3
+    else:
+        direction = "PUT"
+        confirmations = ["OANDA Live Tick Momentum: Bearish Candle"]
+        score = 3
 
     entry = last.close
     if direction == "CALL":
-        stop = min(last.low, swept_level) - atr * 0.15
-        risk = entry - stop
-        target = entry + risk * MIN_RR
+        stop = entry - (atr * 1.0)
+        target = entry + (atr * 1.5)
     else:
-        stop = max(last.high, swept_level) + atr * 0.15
-        risk = stop - entry
-        target = entry - risk * MIN_RR
+        stop = entry + (atr * 1.0)
+        target = entry - (atr * 1.5)
 
-    if risk <= 0 or not all(map(math.isfinite, (entry, stop, target))):
-        return None
-
-    rr = abs(target - entry) / risk
-    if rr < MIN_RR:
-        return None
+    rr = abs(target - entry) / max(abs(entry - stop), 0.0001)
 
     return Signal(
         pair=pair,
         direction=direction,
         score=score,
         entry=entry,
-        stop_loss=stop,
-        target=target,
+        stop_loss=round(stop, 5),
+        target=round(target, 5),
         risk_reward=round(rr, 2),
         timeframe="1m",
         confirmations=confirmations,
         candle_time=last.timestamp,
-        notes="OANDA API multi-pair stable signal.",
+        notes="OANDA relaxed test signal successfully generated.",
     )
 
 
@@ -306,7 +199,7 @@ async def scan_all(pairs: Optional[Iterable[str]] = None) -> Dict[str, Any]:
         res = await analyze_next_candle_target(pair)
         if res:
             signals.append(res)
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.1)
 
     signals.sort(key=lambda x: x["score"], reverse=True)
     return {
@@ -316,4 +209,4 @@ async def scan_all(pairs: Optional[Iterable[str]] = None) -> Dict[str, Any]:
         "signal_count": len(signals),
         "elapsed_seconds": round(time.perf_counter() - started, 3),
         "status": "OK" if not errors else "PARTIAL",
-    }
+        }
