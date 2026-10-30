@@ -1,5 +1,5 @@
 """
-strategy.py — Async multi-pair Forex signal scanner (DataDriv adapter)
+strategy.py — Async multi-pair Forex signal scanner (Deriv WebSocket Adapter)
 Updated with KAMA, Hurst Exponent, Ranging Support/Resistance, and analyze_next_candle_target
 """
 
@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-import aiohttp
+import websockets
 
 LOG = logging.getLogger("forex_strategy")
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper())
@@ -29,14 +29,12 @@ PAIRS = [p.strip().upper() for p in os.getenv(
 ).split(",") if p.strip()]
 
 TIMEFRAMES = {
-    "execution": os.getenv("EXECUTION_TIMEFRAME", "1m"),
-    "confirmation": os.getenv("CONFIRMATION_TIMEFRAME", "5m"),
-    "trend": os.getenv("TREND_TIMEFRAME", "15m"),
+    "execution": "1m",
+    "confirmation": "5m",
+    "trend": "15m",
 }
 
 CANDLE_LIMIT = int(os.getenv("CANDLE_LIMIT", "300"))
-REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "12"))
-MAX_CONCURRENCY = int(os.getenv("MAX_CONCURRENCY", "12"))
 MIN_SCORE = int(os.getenv("MIN_SCORE", "7"))
 MIN_RR = float(os.getenv("MIN_RR", "1.5"))
 
@@ -69,114 +67,61 @@ class Signal:
         return asdict(self)
 
 
-def _get_nested(data: Any, dotted_path: str) -> Any:
-    value = data
-    for key in dotted_path.split("."):
-        if isinstance(value, dict):
-            value = value.get(key)
-        else:
-            return None
-    return value
+class DerivClient:
+    """Async WebSocket adapter for Deriv API candles."""
 
-
-def _number(row: dict, names: Sequence[str], default: Optional[float] = None):
-    for name in names:
-        value = row.get(name)
-        if value is not None:
-            try:
-                return float(value)
-            except (TypeError, ValueError):
-                pass
-    return default
-
-
-def normalize_candles(payload: Any) -> List[Candle]:
-    path = os.getenv("DATADRIV_CANDLES_PATH", "").strip()
-    rows = _get_nested(payload, path) if path else payload
-
-    if isinstance(rows, dict):
-        for key in ("candles", "data", "results", "items", "prices"):
-            if isinstance(rows.get(key), list):
-                rows = rows[key]
-                break
-
-    if not isinstance(rows, list):
-        raise ValueError("Could not locate candle list in DataDriv response.")
-
-    out: List[Candle] = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        o = _number(row, ("open", "o", "Open"))
-        h = _number(row, ("high", "h", "High"))
-        l = _number(row, ("low", "l", "Low"))
-        c = _number(row, ("close", "c", "Close", "price"))
-        if None in (o, h, l, c):
-            continue
-        ts = row.get("timestamp", row.get("time", row.get("t", row.get("date"))))
-        vol = _number(row, ("volume", "tick_volume", "v", "Volume"), 0.0) or 0.0
-        if h < l or h < max(o, c) or l > min(o, c):
-            continue
-        out.append(Candle(ts, o, h, l, c, vol))
-
-    try:
-        out.sort(key=lambda x: float(x.timestamp))
-    except (TypeError, ValueError):
-        pass
-    return out
-
-
-class DataDrivClient:
-    def __init__(self, session: aiohttp.ClientSession):
-        self.session = session
-        self.url = os.getenv("DATADRIV_API_URL", "").strip()
-        self.api_key = os.getenv("DATADRIV_API_KEY", "").strip()
-        self.sem = asyncio.Semaphore(MAX_CONCURRENCY)
+    def __init__(self):
+        self.app_id = os.getenv("DERIV_APP_ID", "").strip()
+        self.api_token = os.getenv("DERIV_API_TOKEN", "").strip()
 
     async def candles(self, symbol: str, interval: str) -> List[Candle]:
-        if not self.url:
-            raise RuntimeError("DATADRIV_API_URL environment variable is missing")
+        if not self.app_id:
+            raise RuntimeError("DERIV_APP_ID environment variable is missing")
 
-        params = {
-            os.getenv("DATADRIV_SYMBOL_PARAM", "symbol"): symbol,
-            os.getenv("DATADRIV_INTERVAL_PARAM", "interval"): interval,
-            os.getenv("DATADRIV_LIMIT_PARAM", "limit"): str(CANDLE_LIMIT),
-        }
-        headers = {"Accept": "application/json"}
-        key_param = os.getenv("DATADRIV_API_KEY_PARAM", "").strip()
+        # Map interval to granularity in seconds
+        gran_map = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600}
+        granularity = gran_map.get(interval, 60)
 
-        if self.api_key:
-            if key_param:
-                params[key_param] = self.api_key
-            else:
-                header_name = os.getenv("DATADRIV_API_KEY_HEADER", "Authorization")
-                prefix = os.getenv("DATADRIV_API_KEY_PREFIX", "Bearer")
-                headers[header_name] = f"{prefix} {self.api_key}".strip()
+        # Format symbol for Deriv (e.g. EURUSD -> frxEURUSD)
+        deriv_symbol = symbol if symbol.startswith("frx") or symbol.startswith("R_") else f"frx{symbol}"
 
-        async with self.sem:
-            last_error = None
-            for attempt in range(3):
-                try:
-                    timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
-                    async with self.session.get(
-                        self.url, params=params, headers=headers, timeout=timeout
-                    ) as response:
-                        if response.status == 429 or response.status >= 500:
-                            body = await response.text()
-                            raise RuntimeError(f"DataDriv HTTP {response.status}: {body[:200]}")
-                        response.raise_for_status()
-                        payload = await response.json(content_type=None)
-                        candles = normalize_candles(payload)
-                        if len(candles) < 60:
-                            raise ValueError(f"{symbol} {interval}: only {len(candles)} valid candles")
-                        return candles
-                except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError) as exc:
-                    last_error = exc
-                    if attempt < 2:
-                        await asyncio.sleep(0.4 * (2 ** attempt))
-                except (ValueError, TypeError, json.JSONDecodeError):
-                    raise
-            raise RuntimeError(f"{symbol} {interval} fetch failed: {last_error}")
+        uri = f"wss://ws.derivws.com/websockets_v3?app_id={self.app_id}"
+        
+        async with websockets.connect(uri) as websocket:
+            if self.api_token:
+                await websocket.send(json.dumps({"authorize": self.api_token}))
+                await websocket.recv()
+
+            req = {
+                "ticks_history": deriv_symbol,
+                "adjust_start_time": 1,
+                "count": CANDLE_LIMIT,
+                "end": "latest",
+                "granularity": granularity,
+                "style": "candles"
+            }
+            await websocket.send(json.dumps(req))
+            resp = await websocket.recv()
+            data = json.loads(resp)
+
+            if "error" in data:
+                raise RuntimeError(f"Deriv API error for {symbol}: {data['error'].get('message')}")
+
+            candles_data = data.get("candles", [])
+            out: List[Candle] = []
+            for row in candles_data:
+                ts = row.get("epoch")
+                o = float(row.get("open", 0))
+                h = float(row.get("high", 0))
+                l = float(row.get("low", 0))
+                c = float(row.get("close", 0))
+                if h < l or h < max(o, c) or l > min(o, c):
+                    continue
+                out.append(Candle(ts, o, h, l, c, 0.0))
+
+            if len(out) < 60:
+                raise ValueError(f"{symbol} {interval}: only {len(out)} valid candles")
+            return out
 
 
 def _atr(c: Sequence[Candle], period: int = 14) -> float:
@@ -292,23 +237,6 @@ def _fvg(c: Sequence[Candle], direction: str):
     return None
 
 
-def _approx_volume_profile(c: Sequence[Candle], bins: int = 24):
-    lo = min(x.low for x in c)
-    hi = max(x.high for x in c)
-    if hi <= lo:
-        return None
-    width = (hi - lo) / bins
-    hist = [0.0] * bins
-    for x in c:
-        typical = (x.high + x.low + x.close) / 3
-        idx = min(bins - 1, max(0, int((typical - lo) / width)))
-        hist[idx] += max(0.0, x.volume)
-    if max(hist) <= 0:
-        return None
-    poc_idx = max(range(bins), key=lambda i: hist[i])
-    return lo + (poc_idx + 0.5) * width
-
-
 def _analyse(
     pair: str,
     execution: Sequence[Candle],
@@ -381,12 +309,6 @@ def _analyse(
         confirmations.append(f"FVG zone {gap[0]:.5f}–{gap[1]:.5f}")
         score += 2
 
-    poc = _approx_volume_profile(execution[-100:])
-    if poc is not None:
-        if abs(last.close - poc) <= atr * 0.75:
-            confirmations.append(f"Approx. tick-volume POC confluence {poc:.5f}")
-            score += 1
-
     body = abs(last.close - last.open)
     if body >= atr * 0.5 and ((direction == "CALL" and last.close > last.open) or (direction == "PUT" and last.close < last.open)):
         confirmations.append("Directional displacement")
@@ -430,28 +352,23 @@ def _analyse(
         timeframe=TIMEFRAMES["execution"],
         confirmations=confirmations,
         candle_time=last.timestamp,
-        notes="Rule-based research signal with KAMA, Hurst & S/R.",
+        notes="Rule-based research signal with Deriv WebSocket API.",
     )
 
 
 async def analyze_next_candle_target(pair: str) -> Optional[Dict[str, Any]]:
-    """
-    Asynchronous helper called by main.py to fetch and analyze a pair across timeframes.
-    """
-    connector = aiohttp.TCPConnector(limit=1, ttl_dns_cache=300)
-    async with aiohttp.ClientSession(connector=connector) as session:
-        client = DataDrivClient(session)
-        try:
-            execution, confirmation, trend_data = await asyncio.gather(
-                client.candles(pair, TIMEFRAMES["execution"]),
-                client.candles(pair, TIMEFRAMES["confirmation"]),
-                client.candles(pair, TIMEFRAMES["trend"]),
-            )
-            signal = _analyse(pair, execution, confirmation, trend_data)
-            if signal:
-                return signal.to_dict()
-        except Exception as exc:
-            LOG.exception("Analysis failed for %s", pair)
+    client = DerivClient()
+    try:
+        execution, confirmation, trend_data = await asyncio.gather(
+            client.candles(pair, TIMEFRAMES["execution"]),
+            client.candles(pair, TIMEFRAMES["confirmation"]),
+            client.candles(pair, TIMEFRAMES["trend"]),
+        )
+        signal = _analyse(pair, execution, confirmation, trend_data)
+        if signal:
+            return signal.to_dict()
+    except Exception as exc:
+        LOG.exception("Analysis failed for %s", pair)
     return None
 
 
