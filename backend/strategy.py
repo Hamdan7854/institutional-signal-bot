@@ -1,39 +1,30 @@
 """
-strategy.py — Async multi-pair Forex signal scanner (Optimized for EURUSD & USDJPY)
+strategy.py — Finnhub REST API Forex Signal Scanner (EURUSD & USDJPY)
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import math
 import os
 import time
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
-
-import websockets
+import requests
 
 LOG = logging.getLogger("forex_strategy")
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper())
 
-# Sirf EURUSD aur USDJPY rakhe hain taake speed fast ho aur HTTP 520 error na aaye
-DEFAULT_PAIRS = [
-    "EURUSD", "USDJPY",
-]
-
-PAIRS = [p.strip().upper() for p in os.getenv(
-    "PAIRS", ",".join(DEFAULT_PAIRS)
-).split(",") if p.strip()]
+# Finnhub ke mutabiq symbols
+DEFAULT_PAIRS = ["EURUSD", "USDJPY"]
 
 TIMEFRAMES = {
-    "execution": "1m",
-    "confirmation": "5m",
-    "trend": "15m",
+    "execution": "1",    # 1 minute
+    "confirmation": "5", # 5 minutes
+    "trend": "15",       # 15 minutes
 }
 
-CANDLE_LIMIT = int(os.getenv("CANDLE_LIMIT", "200"))
 MIN_SCORE = int(os.getenv("MIN_SCORE", "7"))
 MIN_RR = float(os.getenv("MIN_RR", "1.5"))
 
@@ -66,82 +57,72 @@ class Signal:
         return asdict(self)
 
 
-class DerivClient:
-    """Safe Deriv WebSocket adapter fetching timeframes securely."""
+class FinnhubClient:
+    """Finnhub REST API client for fetching Forex candles reliably."""
 
     def __init__(self):
-        self.app_id = os.getenv("DERIV_APP_ID", "").strip()
-        self.api_token = os.getenv("DERIV_API_TOKEN", "").strip()
-        self.sem = asyncio.Semaphore(1)
+        self.api_key = os.getenv("FINNHUB_API_KEY", "").strip()
 
-    async def _fetch_single_tf(self, websocket, deriv_symbol: str, granularity: int) -> List[Candle]:
-        req = {
-            "ticks_history": deriv_symbol,
-            "adjust_start_time": 1,
-            "count": CANDLE_LIMIT,
-            "end": "latest",
-            "granularity": granularity,
-            "style": "candles"
+    def _fetch_candles(self, symbol: str, resolution: str) -> List[Candle]:
+        if not self.api_key:
+            raise RuntimeError("FINNHUB_API_KEY environment variable is missing")
+
+        # Finnhub symbol format (e.g., OANDA:EUR_USD)
+        finnhub_symbol = f"OANDA:{symbol[:3]}_{symbol[3:]}"
+        
+        # Last 3 days range for candles
+        to_time = int(time.time())
+        from_time = to_time - (3 * 24 * 60 * 60)
+
+        url = "https://finnhub.io/api/v1/forex/candle"
+        params = {
+            "symbol": finnhub_symbol,
+            "resolution": resolution,
+            "from": from_time,
+            "to": to_time,
+            "token": self.api_key
         }
-        await websocket.send(json.dumps(req))
-        resp = await websocket.recv()
-        data = json.loads(resp)
 
-        if "error" in data:
-            raise RuntimeError(f"Deriv API error: {data['error'].get('message')}")
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code != 200:
+            raise RuntimeError(f"Finnhub HTTP error {response.status_code}")
 
-        candles_data = data.get("candles", [])
+        data = response.json()
+        if data.get("s") != "ok":
+            raise RuntimeError(f"Finnhub API returned status: {data.get('s')}")
+
+        timestamps = data.get("t", [])
+        opens = data.get("o", [])
+        highs = data.get("h", [])
+        lows = data.get("l", [])
+        closes = data.get("c", [])
+
         out: List[Candle] = []
-        for row in candles_data:
-            ts = row.get("epoch")
-            o = float(row.get("open", 0))
-            h = float(row.get("high", 0))
-            l = float(row.get("low", 0))
-            c = float(row.get("close", 0))
-            if h < l or h < max(o, c) or l > min(o, c):
-                continue
-            out.append(Candle(ts, o, h, l, c, 0.0))
+        for i in range(len(timestamps)):
+            out.append(Candle(
+                timestamp=timestamps[i],
+                open=float(opens[i]),
+                high=float(highs[i]),
+                low=float(lows[i]),
+                close=float(closes[i]),
+                volume=0.0
+            ))
         return out
 
     async def fetch_timeframes(self, symbol: str) -> Tuple[List[Candle], List[Candle], List[Candle]]:
-        if not self.app_id:
-            raise RuntimeError("DERIV_APP_ID environment variable is missing")
+        # Run synchronous requests in thread to keep async event loop non-blocking
+        loop = asyncio.get_running_loop()
+        
+        execution = await loop.run_in_executor(None, self._fetch_candles, symbol, TIMEFRAMES["execution"])
+        await asyncio.sleep(0.2)
+        confirmation = await loop.run_in_executor(None, self._fetch_candles, symbol, TIMEFRAMES["confirmation"])
+        await asyncio.sleep(0.2)
+        trend_data = await loop.run_in_executor(None, self._fetch_candles, symbol, TIMEFRAMES["trend"])
 
-        deriv_symbol = symbol if symbol.startswith("frx") or symbol.startswith("R_") else f"frx{symbol}"
-        uri = f"wss://ws.derivws.com/websockets_v3?app_id={self.app_id}"
+        if len(execution) < 50 or len(confirmation) < 50 or len(trend_data) < 50:
+            raise ValueError(f"{symbol}: Insufficient candles from Finnhub")
 
-        gran_map = {
-            "1m": 60,
-            "5m": 300,
-            "15m": 900
-        }
-
-        async with self.sem:
-            last_err = None
-            for attempt in range(3):
-                try:
-                    async with websockets.connect(uri, open_timeout=25) as websocket:
-                        if self.api_token:
-                            await websocket.send(json.dumps({"authorize": self.api_token}))
-                            await websocket.recv()
-
-                        execution = await self._fetch_single_tf(websocket, deriv_symbol, gran_map["1m"])
-                        await asyncio.sleep(0.2)
-                        confirmation = await self._fetch_single_tf(websocket, deriv_symbol, gran_map["5m"])
-                        await asyncio.sleep(0.2)
-                        trend_data = await self._fetch_single_tf(websocket, deriv_symbol, gran_map["15m"])
-
-                        if len(execution) < 50 or len(confirmation) < 50 or len(trend_data) < 50:
-                            raise ValueError(f"{symbol}: Insufficient valid candles received")
-
-                        return execution, confirmation, trend_data
-
-                except Exception as exc:
-                    last_err = exc
-                    if attempt < 2:
-                        await asyncio.sleep(1.0 * (attempt + 1))
-
-        raise RuntimeError(f"Failed to fetch {symbol} from Deriv: {last_err}")
+        return execution, confirmation, trend_data
 
 
 def _atr(c: Sequence[Candle], period: int = 14) -> float:
@@ -167,33 +148,6 @@ def _kama(c: Sequence[Candle], period: int = 10, fast_end: float = 2.0 / 3.0, sl
         prev_kama = kama_values[-1]
         kama_values.append(prev_kama + sc * (closes[i] - prev_kama))
     return kama_values[-1] if kama_values else None
-
-
-def _hurst_exponent(c: Sequence[Candle], max_lag: int = 20) -> float:
-    closes = [x.close for x in c]
-    if len(closes) < max_lag * 2:
-        return 0.5
-    lags = range(2, max_lag)
-    tau = []
-    for lag in lags:
-        diffs = [closes[i] - closes[i - lag] for i in range(lag, len(closes))]
-        if not diffs:
-            continue
-        variance = sum((d - (sum(diffs)/len(diffs))) ** 2 for d in diffs) / len(diffs)
-        tau.append(math.sqrt(variance) if variance > 0 else 1e-8)
-    if len(tau) < 2:
-        return 0.5
-    log_lags = [math.log(l) for l in lags[:len(tau)]]
-    log_tau = [math.log(t) if t > 0 else 0 for t in tau]
-    n = len(log_lags)
-    sum_x = sum(log_lags)
-    sum_y = sum(log_tau)
-    sum_xy = sum(x * y for x, y in zip(log_lags, log_tau))
-    sum_xx = sum(x * x for x in log_lags)
-    denominator = (n * sum_xx - sum_x ** 2)
-    if denominator == 0:
-        return 0.5
-    return float((n * sum_xy - sum_x * sum_y) / denominator)
 
 
 def _support_resistance_zones(c: Sequence[Candle], lookback: int = 50) -> Tuple[Optional[float], Optional[float]]:
@@ -247,16 +201,6 @@ def _mss(c: Sequence[Candle], direction: str, lookback: int = 20) -> bool:
     return c[-1].close < min(x.low for x in recent)
 
 
-def _fvg(c: Sequence[Candle], direction: str):
-    for i in range(len(c) - 1, max(1, len(c) - 12), -1):
-        first, third = c[i - 2], c[i]
-        if direction == "CALL" and first.high < third.low:
-            return (first.high, third.low)
-        if direction == "PUT" and first.low > third.high:
-            return (third.high, first.low)
-    return None
-
-
 def _analyse(
     pair: str,
     execution: Sequence[Candle],
@@ -302,24 +246,14 @@ def _analyse(
         elif direction == "PUT" and last.close < kama_val:
             score += 1
 
-    hurst = _hurst_exponent(execution)
-    confirmations.append(f"Hurst Exponent: {hurst:.2f}")
-    if hurst < 0.5:
-        score += 1
-
     sup, res = _support_resistance_zones(execution)
     if sup is not None and res is not None:
         if direction == "CALL" and abs(last.low - sup) <= atr * 0.75:
-            confirmations.append(f"Ranging Support confluence at {sup:.5f}")
+            confirmations.append(f"Support confluence at {sup:.5f}")
             score += 1
         elif direction == "PUT" and abs(last.high - res) <= atr * 0.75:
-            confirmations.append(f"Ranging Resistance confluence at {res:.5f}")
+            confirmations.append(f"Resistance confluence at {res:.5f}")
             score += 1
-
-    gap = _fvg(execution, direction)
-    if gap:
-        confirmations.append(f"FVG zone")
-        score += 2
 
     if score < MIN_SCORE:
         return None
@@ -349,27 +283,27 @@ def _analyse(
         stop_loss=stop,
         target=target,
         risk_reward=round(rr, 2),
-        timeframe=TIMEFRAMES["execution"],
+        timeframe="1m",
         confirmations=confirmations,
         candle_time=last.timestamp,
-        notes="Optimized Deriv WebSocket signal.",
+        notes="Finnhub REST API stable signal.",
     )
 
 
 async def analyze_next_candle_target(pair: str) -> Optional[Dict[str, Any]]:
-    client = DerivClient()
+    client = FinnhubClient()
     try:
         execution, confirmation, trend_data = await client.fetch_timeframes(pair)
         signal = _analyse(pair, execution, confirmation, trend_data)
         if signal:
             return signal.to_dict()
     except Exception as exc:
-        LOG.exception("Analysis failed for %s", pair)
+        LOG.exception("Finnhub analysis failed for %s: %s", pair, exc)
     return None
 
 
 async def scan_all(pairs: Optional[Iterable[str]] = None) -> Dict[str, Any]:
-    selected = [p.upper().strip() for p in (pairs or PAIRS) if p.strip()]
+    selected = [p.upper().strip() for p in (pairs or DEFAULT_PAIRS) if p.strip()]
     started = time.perf_counter()
     
     signals = []
@@ -378,7 +312,7 @@ async def scan_all(pairs: Optional[Iterable[str]] = None) -> Dict[str, Any]:
         res = await analyze_next_candle_target(pair)
         if res:
             signals.append(res)
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.2)
 
     signals.sort(key=lambda x: x["score"], reverse=True)
     return {
