@@ -2,48 +2,47 @@ import logging
 import asyncio
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-from config import TELEGRAM_BOT_TOKEN, INSTRUMENTS
+from config import TELEGRAM_BOT_TOKEN, INSTRUMENTS, TIMEFRAMES
 from data.oanda_client import OandaClient
-from data.candle_builder import CandleBuilder
-from features.feature_engine import FeatureEngine
-from prediction.engine import PredictionEngine
+from features.micp_features import MICPFeatureEngine
+from prediction.micp_engine import MICPPredictionEngine
 from storage.database import DatabaseHandler
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-async def scan_market(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def micp_signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    await context.bot.send_message(chat_id=chat_id, text="🔍 Market scan shuru ho gaya hai, please wait...")
+    await context.bot.send_message(
+        chat_id=chat_id, 
+        text="🧠 **MICP-60 Engine Initiated:** Scanning 1 to 60 Minutes multi-timeframe intelligence across Forex pairs..."
+    )
 
     oanda = OandaClient()
     db = DatabaseHandler()
-    
-    signals_found = 0
 
-    for pair in INSTRUMENTS:
-        raw_candles = oanda.fetch_candles(instrument=pair, granularity="M5", count=100)
-        if not raw_candles:
-            continue
+    for pair in INSTRUMENTS[:3]: # Top pairs to avoid Telegram message limits
+        report_lines = [f"📊 <b>MICP-60 REPORT: {pair}</b>\n"]
+        
+        for tf_code, tf_name in TIMEFRAMES.items():
+            raw_candles = oanda.fetch_candles(instrument=pair, granularity=tf_code, count=100)
+            if not raw_candles:
+                continue
 
-        df = CandleBuilder.parse_oanda_candles(raw_candles)
-        df_featured = FeatureEngine.add_indicators(df)
-        signal, confidence = PredictionEngine.generate_signal(df_featured)
+            df = MICPFeatureEngine.process_features(raw_candles)
+            direction, confidence, exp_close = MICPPredictionEngine.predict_next_candle(df)
 
-        if signal in ["BUY", "SELL"] and confidence >= 0.80:
-            signals_found += 1
-            db.save_signal(pair, signal, confidence)
-            message = (
-                f"🚨 <b>INSTITUTIONAL SIGNAL ALERT</b> 🚨\n\n"
-                f"📈 <b>Instrument:</b> {pair}\n"
-                f"⚡ <b>Signal:</b> {signal}\n"
-                f"🎯 <b>Confidence:</b> {confidence * 100:.1f}%\n"
-                f"⏱️ <b>Timeframe:</b> M5"
+            report_lines.append(
+                f"⏱️ <b>{tf_name} ({tf_code}):</b> {direction}\n"
+                f"🎯 Confidence: {confidence * 100:.0f}% | Exp. Close: {exp_close}\n"
             )
-            await context.bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
+            
+            # Save to Database
+            db.save_signal(pair, f"{tf_code}_{direction}", confidence)
 
-    if signals_found == 0:
-        await context.bot.send_message(chat_id=chat_id, text="ℹ️ Filhal kisi bhi pair par strong signal nahi mila (All HOLD).")
+        full_message = "\n".join(report_lines)
+        await context.bot.send_message(chat_id=chat_id, text=full_message, parse_mode="HTML")
+        await asyncio.sleep(1)
 
 def main():
     if not TELEGRAM_BOT_TOKEN:
@@ -51,11 +50,9 @@ def main():
         return
 
     application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-    
-    # /signal command handler
-    application.add_handler(CommandHandler("signal", scan_market))
+    application.add_handler(CommandHandler("signal", micp_signal_command))
 
-    logger.info("Bot is running and listening for /signal command...")
+    logger.info("MICP-60 Telegram Bot is live and listening for /signal...")
     application.run_polling()
 
 if __name__ == "__main__":
