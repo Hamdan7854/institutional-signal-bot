@@ -17,4 +17,12 @@ OANDA_URLS = {
 
 BASE_URL = OANDA_URLS.get(OANDA_ENVIRONMENT, OANDA_URLS["practice"])
 INSTRUMENTS = ["EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD", "USD_CAD", "EUR_GBP"]
-TIMEFRAME = "M5"
+
+# MICP-60 Timeframes mapping (1 min to 60 mins)
+TIMEFRAMES = {
+    "M1": "1 Minute",
+    "M5": "5 Minutes",
+    "M15": "15 Minutes",
+    "M30": "30 Minutes",
+    "H1": "60 Minutes"
+}
