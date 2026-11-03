@@ -1,75 +1,45 @@
-import logging
-import os
-from flask import Flask
-import threading
+import time
 import asyncio
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-from config import TELEGRAM_BOT_TOKEN, FOREX_PAIRS
-from strategy import scan_all
+import logging
+from backend.config import INSTRUMENTS
+from backend.data.oanda_client import OandaClient
+from backend.data.candle_builder import CandleBuilder
+from backend.features.feature_engine import FeatureEngine
+from backend.prediction.engine import PredictionEngine
+from backend.storage.database import DatabaseHandler
+from backend.telegram_bot import TelegramNotifier
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
 
-# 1. Flask App (Render port binding ke liye)
-flask_app = Flask(__name__)
+async def run_pipeline():
+    oanda = OandaClient()
+    db = DatabaseHandler()
+    notifier = TelegramNotifier()
 
-@flask_app.route('/')
-def home():
-    return "Institutional Signal Bot is Running Successfully!"
+    logger.info("Starting signal scanning round...")
 
-def run_flask():
-    port = int(os.environ.get("PORT", 10000))
-    flask_app.run(host='0.0.0.0', port=port)
+    for pair in INSTRUMENTS:
+        raw_candles = oanda.fetch_candles(instrument=pair, granularity="M5", count=100)
+        if not raw_candles:
+            continue
 
-# 2. Telegram Bot Command Handler
-async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /signal command execution handler.
-    Saare pairs ko foran parallel scan karta hai aur matching signals return karta hai.
-    """
-    await update.message.reply_text("🔎 *Institutional Scan Active...* Pairs check kiye ja rahe hain...", parse_mode="Markdown")
-    
-    # Sary pairs ko scan_all ke zariye parallel run karna
-    pairs_to_scan = FOREX_PAIRS if 'FOREX_PAIRS' in globals() or 'FOREX_PAIRS' in locals() else None
-    result = await scan_all(pairs_to_scan)
-    
-    signals = result.get("signals", [])
-    signals_sent = 0
+        df = CandleBuilder.parse_oanda_candles(raw_candles)
+        df_featured = FeatureEngine.add_indicators(df)
+        signal, confidence = PredictionEngine.generate_signal(df_featured)
 
-    for s in signals:
-        signals_sent += 1
-        factors_str = "\n• ".join(s['confirmations'])
-        
-        # Color & Emoji for Direction
-        if s['direction'] == "BUY":
-            direction_str = "🟢 BUY"
-        else:
-            direction_str = "🔴 SELL"
-        
-        msg = (
-            f"🎯 *PRECISION SIGNAL MATCH* 🎯\n\n"
-            f"🔤 *Pair:* `{s['pair']}`\n"
-            f"📈 *Direction:* {direction_str}\n"
-            f"📍 *Entry Price:* `{s['entry']}`\n"
-            f"🛑 *Stop Loss:* `{s['stop_loss']}`\n"
-            f"🎯 *Target:* `{s['target']}`\n\n"
-            f"📊 *Confirmations & Mechanics:*\n• {factors_str}\n\n"
-            f"🔥 *Score:* `{s['score']}/8` | *R:R:* `{s['risk_reward']}`"
-        )
-        await update.message.reply_text(msg, parse_mode="Markdown")
-            
-    if signals_sent == 0:
-        await update.message.reply_text("⚠️ Abhi kisi bhi pair par high-confluence setup match nahi hua. Kuch dair baad dobara koshish karein.", parse_mode="Markdown")
+        if signal in ["BUY", "SELL"] and confidence >= 0.80:
+            logger.info(f"Valid signal detected for {pair}: {signal}")
+            db.save_signal(pair, signal, confidence)
+            await notifier.send_signal_alert(pair, signal, confidence)
 
-def main():
-    flask_thread = threading.Thread(target=run_flask)
-    flask_thread.daemon = True
-    flask_thread.start()
-    
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-    app.add_handler(CommandHandler("signal", signal_command))
-    print("Bot & Flask server are running with lightning-fast async scanning...")
-    app.run_polling()
+async def main():
+    while True:
+        try:
+            await run_pipeline()
+        except Exception as e:
+            logger.error(f"Error in main loop: {e}")
+        await asyncio.sleep(300)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
