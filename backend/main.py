@@ -1,13 +1,13 @@
 import time
 import asyncio
 import logging
-from backend.config import INSTRUMENTS
-from backend.data.oanda_client import OandaClient
-from backend.data.candle_builder import CandleBuilder
-from backend.features.feature_engine import FeatureEngine
-from backend.prediction.engine import PredictionEngine
-from backend.storage.database import DatabaseHandler
-from backend.telegram_bot import TelegramNotifier
+from config import INSTRUMENTS
+from data.oanda_client import OandaClient
+from data.candle_builder import CandleBuilder
+from features.feature_engine import FeatureEngine
+from prediction.engine import PredictionEngine
+from storage.database import DatabaseHandler
+from telegram_bot import TelegramNotifier
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
