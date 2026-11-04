@@ -1,45 +1,34 @@
-import pandas as pd
+from backend.features.micp_features import calculate_kama, calculate_hurst, get_sr_ranges
 
-class MICPPredictionEngine:
-    @staticmethod
-    def predict_next_candle(df: pd.DataFrame):
-        if df is None or len(df) < 5:
-            return "NEUTRAL", 0.0, 0.0
+def evaluate_micp_90_signal(tf_data, closes, highs, lows):
+    # 1. Multi-timeframe agreement strength check
+    bullish_count = sum(1 for t in tf_data.values() if t == "BULLISH")
+    bearish_count = sum(1 for t in tf_data.values() if t == "BEARISH")
+    
+    if bullish_count < 4 and bearish_count < 4:
+        return "NO TRADE", "Weak MTF Confluence"
 
-        latest = df.iloc[-1]
-        prev = df.iloc[-2]
+    base_dir = "CALL" if bullish_count >= 4 else "PUT"
 
-        close = latest['close']
-        sma = latest['sma_20']
-        rsi = latest['rsi']
-        atr = latest['atr']
+    # 2. Market Regime & Hurst Filter
+    hurst = calculate_hurst(closes)
+    if hurst < 0.5:
+        return "NO TRADE", "Sideways/Choppy Market (Hurst < 0.5)"
 
-        # Quantitative Multi-Factor Logic for MICP-60
-        bullish_score = 0
-        bearish_score = 0
+    # 3. Support/Resistance & Price Boundary Check
+    support, resistance = get_sr_ranges(highs, lows)
+    current_price = closes[-1]
+    
+    if base_dir == "CALL" and current_price >= resistance:
+        return "NO TRADE", "At Resistance Zone"
+    if base_dir == "PUT" and current_price <= support:
+        return "NO TRADE", "At Support Zone"
 
-        if close > sma:
-            bullish_score += 0.4
-        else:
-            bearish_score += 0.4
+    # 4. Candle Behavior (Body-to-Wick Ratio)
+    # Assume latest candle stats
+    body = abs(closes[-1] - closes[-2])
+    total_range = highs[-1] - lows[-1]
+    if total_range > 0 and (body / total_range) < 0.60:
+        return "NO TRADE", "Weak Candle Momentum / High Wicks"
 
-        if rsi < 45:
-            bullish_score += 0.4  # Oversold bounce potential
-        elif rsi > 55:
-            bearish_score += 0.4  # Overbought pullback potential
-
-        if latest['close'] > prev['close']:
-            bullish_score += 0.2
-        else:
-            bearish_score += 0.2
-
-        if bullish_score > bearish_score:
-            direction = "BULLISH 🚀"
-            confidence = round(min(bullish_score, 0.95), 2)
-            expected_close = round(close + (atr * 0.3), 5)
-        else:
-            direction = "BEARISH 📉"
-            confidence = round(min(bearish_score, 0.95), 2)
-            expected_close = round(close - (atr * 0.3), 5)
-
-        return direction, confidence, expected_close
+    return base_dir, "VALIDATED HIGH-CONFIDENCE SIGNAL"
