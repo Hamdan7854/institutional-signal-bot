@@ -16,7 +16,12 @@ OANDA_URLS = {
 }
 
 BASE_URL = OANDA_URLS.get(OANDA_ENVIRONMENT, OANDA_URLS["practice"])
-INSTRUMENTS = ["EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD", "USD_CAD", "EUR_GBP"]
+
+# Verified OANDA Live Forex Pairs matching Pocket Option Live Currencies
+INSTRUMENTS = [
+    "EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD", "USD_CAD", "EUR_GBP",
+    "NZD_USD", "USD_CHF", "CAD_JPY", "EUR_JPY", "AUD_JPY", "GBP_JPY"
+]
 
 # MICP-60 Timeframes mapping (1 min to 60 mins)
 TIMEFRAMES = {
