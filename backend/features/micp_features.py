@@ -4,6 +4,15 @@ class MICPFeatureEngine:
     def __init__(self):
         pass
 
+    def process_features(self, raw_candles):
+        """
+        Extracts closes, highs, and lows safely from raw candle data.
+        """
+        closes = [c['close'] for c in raw_candles] if raw_candles else []
+        highs = [c['high'] for c in raw_candles] if raw_candles else []
+        lows = [c['low'] for c in raw_candles] if raw_candles else []
+        return closes, highs, lows
+
     def calculate_kama(self, prices, period=10, fast_end=2, slow_end=30):
         if len(prices) < period:
             return prices[-1] if len(prices) > 0 else 0.0
@@ -29,6 +38,8 @@ class MICPFeatureEngine:
         return poly[0] * 2.0
 
     def get_sr_ranges(self, highs, lows):
-        resistance = max(highs[-10:])
-        support = min(lows[-10:])
+        if not highs or not lows:
+            return 0.0, 0.0
+        resistance = max(highs[-10:]) if len(highs) >= 10 else max(highs)
+        support = min(lows[-10:]) if len(lows) >= 10 else min(lows)
         return support, resistance
