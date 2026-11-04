@@ -1,5 +1,4 @@
-from backend.features.micp_features import calculate_kama, calculate_hurst, get_sr_ranges
-
+from features.micp_features import MICPFeatureEngine
 def evaluate_micp_90_signal(tf_data, closes, highs, lows):
     # 1. Multi-timeframe agreement strength check
     bullish_count = sum(1 for t in tf_data.values() if t == "BULLISH")
