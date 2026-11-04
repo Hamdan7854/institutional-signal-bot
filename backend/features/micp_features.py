@@ -4,10 +4,12 @@ class MICPFeatureEngine:
     def __init__(self):
         pass
 
-    def process_features(self, raw_candles):
+    def process_features(self, raw_candles=None):
         """
         Extracts closes, highs, and lows safely from raw candle data.
         """
+        if not raw_candles:
+            return [], [], []
         closes = [c['close'] for c in raw_candles] if raw_candles else []
         highs = [c['high'] for c in raw_candles] if raw_candles else []
         lows = [c['low'] for c in raw_candles] if raw_candles else []
