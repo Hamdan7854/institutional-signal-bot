@@ -1,7 +1,6 @@
 import logging
 import os
 import threading
-import asyncio
 from flask import Flask
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
@@ -51,25 +50,21 @@ async def micp_signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         full_message = "\n".join(report_lines)
         await context.bot.send_message(chat_id=chat_id, text=full_message, parse_mode="HTML")
-        await asyncio.sleep(1)
 
 def run_bot_polling():
     if not TELEGRAM_BOT_TOKEN:
-        logger.error("❌ TELEGRAM_BOT_TOKEN is missing in environment variables!")
+        logger.error("❌ TELEGRAM_BOT_TOKEN is missing!")
         return
 
-    logger.info("🚀 Initializing Telegram Bot Application...")
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
+    logger.info("🚀 Starting Telegram Bot Application...")
     try:
         application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
         application.add_handler(CommandHandler("signal", micp_signal_command))
         
-        logger.info("✅ Telegram Bot polling started successfully!")
+        logger.info("✅ Telegram Bot is now polling for messages...")
         application.run_polling(drop_pending_updates=True)
     except Exception as e:
-        logger.error(f"❌ Error in Telegram polling thread: {e}")
+        logger.error(f"❌ Error in Telegram polling: {e}")
 
 if __name__ == "__main__":
     # Start Telegram Bot in background thread
