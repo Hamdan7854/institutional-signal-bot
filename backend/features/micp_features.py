@@ -6,13 +6,23 @@ class MICPFeatureEngine:
 
     def process_features(self, raw_candles=None):
         """
-        Extracts closes, highs, and lows safely from raw candle data.
+        Safely extracts closes, highs, and lows handling both dicts and lists/tuples.
         """
         if not raw_candles:
             return [], [], []
-        closes = [c['close'] for c in raw_candles] if raw_candles else []
-        highs = [c['high'] for c in raw_candles] if raw_candles else []
-        lows = [c['low'] for c in raw_candles] if raw_candles else []
+        
+        closes, highs, lows = [], [], []
+        for c in raw_candles:
+            if isinstance(c, dict):
+                closes.append(c.get('close', 0.0))
+                highs.append(c.get('high', 0.0))
+                lows.append(c.get('low', 0.0))
+            elif isinstance(c, (list, tuple)) and len(c) >= 4:
+                # Assuming standard [open, high, low, close] or similar format
+                closes.append(float(c[3]))
+                highs.append(float(c[1]))
+                lows.append(float(c[2]))
+        
         return closes, highs, lows
 
     def calculate_kama(self, prices, period=10, fast_end=2, slow_end=30):
