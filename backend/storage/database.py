@@ -1,4 +1,7 @@
-# Database model update to track signal accuracy and outcomes
-def log_signal_execution(symbol, direction, expiry, outcome):
-    # Code to save prediction vs actual result for probability calibration
-    pass
+class DatabaseHandler:
+    def __init__(self):
+        pass
+
+    def log_signal(self, symbol, direction, outcome):
+        # Database storage logic for tracking signals and performance
+        pass
