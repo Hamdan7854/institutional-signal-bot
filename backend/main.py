@@ -56,12 +56,12 @@ def run_bot_polling():
         logger.error("❌ TELEGRAM_BOT_TOKEN is missing!")
         return
 
-    logger.info("🚀 Starting Telegram Bot Application...")
+    logger.info("🚀 Starting Telegram Bot Polling...")
     try:
+        # Build application and run polling directly without manual loop creation
         application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
         application.add_handler(CommandHandler("signal", micp_signal_command))
         
-        logger.info("✅ Telegram Bot is now polling for messages...")
         application.run_polling(drop_pending_updates=True)
     except Exception as e:
         logger.error(f"❌ Error in Telegram polling: {e}")
