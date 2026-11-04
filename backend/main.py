@@ -1,6 +1,7 @@
 import logging
 import os
 import threading
+import asyncio
 from flask import Flask
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
@@ -51,27 +52,38 @@ async def micp_signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         full_message = "\n".join(report_lines)
         await context.bot.send_message(chat_id=chat_id, text=full_message, parse_mode="HTML")
 
-def run_bot_polling():
+def run_telegram_polling():
     if not TELEGRAM_BOT_TOKEN:
         logger.error("❌ TELEGRAM_BOT_TOKEN is missing!")
         return
 
-    logger.info("🚀 Starting Telegram Bot Polling...")
-    try:
-        # Build application and run polling directly without manual loop creation
+    # Create a fresh event loop for this background thread and assign it
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    async def start_bot():
         application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
         application.add_handler(CommandHandler("signal", micp_signal_command))
         
-        application.run_polling(drop_pending_updates=True)
+        await application.initialize()
+        await application.start()
+        logger.info("✅ Telegram Bot polling started successfully via custom loop!")
+        await application.updater.start_polling(drop_pending_updates=True)
+        
+        # Keep the loop running
+        stop_event = asyncio.Event()
+        await stop_event.wait()
+
+    try:
+        loop.run_until_complete(start_bot())
     except Exception as e:
-        logger.error(f"❌ Error in Telegram polling: {e}")
+        logger.error(f"❌ Error in Telegram polling loop: {e}")
 
 if __name__ == "__main__":
-    # Start Telegram Bot in background thread
-    bot_thread = threading.Thread(target=run_bot_polling)
-    bot_thread.daemon = True
+    # Start Telegram Bot in a dedicated background thread
+    bot_thread = threading.Thread(target=run_telegram_polling, daemon=True)
     bot_thread.start()
 
-    # Run Flask Web Server
+    # Run Flask Web Server on Render assigned PORT
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
