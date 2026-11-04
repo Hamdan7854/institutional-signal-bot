@@ -14,7 +14,7 @@ from storage.database import DatabaseHandler
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# Flask app taake Render Web Service active rahe aur timeout na ho
+# Flask app taake Render Web Service active rahe
 app = Flask(__name__)
 
 @app.route('/')
@@ -31,7 +31,7 @@ async def micp_signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     oanda = OandaClient()
     db = DatabaseHandler()
 
-    for pair in INSTRUMENTS[:3]: # Top pairs to avoid Telegram rate limits
+    for pair in INSTRUMENTS[:3]:
         report_lines = [f"📊 <b>MICP-60 REPORT: {pair}</b>\n"]
         
         for tf_code, tf_name in TIMEFRAMES.items():
@@ -47,34 +47,36 @@ async def micp_signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE
                 f"🎯 Confidence: {confidence * 100:.0f}% | Exp. Close: {exp_close}\n"
             )
             
-            # Save to Database
             db.save_signal(pair, f"{tf_code}_{direction}", confidence)
 
         full_message = "\n".join(report_lines)
         await context.bot.send_message(chat_id=chat_id, text=full_message, parse_mode="HTML")
         await asyncio.sleep(1)
 
-def run_telegram_bot():
+def run_bot_polling():
     if not TELEGRAM_BOT_TOKEN:
-        logger.error("Telegram Bot Token missing!")
+        logger.error("❌ TELEGRAM_BOT_TOKEN is missing in environment variables!")
         return
 
-    # Create a new event loop for this background thread
+    logger.info("🚀 Initializing Telegram Bot Application...")
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-    application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-    application.add_handler(CommandHandler("signal", micp_signal_command))
-
-    logger.info("MICP-60 Telegram Bot polling started in background thread...")
-    application.run_polling()
+    try:
+        application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+        application.add_handler(CommandHandler("signal", micp_signal_command))
+        
+        logger.info("✅ Telegram Bot polling started successfully!")
+        application.run_polling(drop_pending_updates=True)
+    except Exception as e:
+        logger.error(f"❌ Error in Telegram polling thread: {e}")
 
 if __name__ == "__main__":
-    # Start Telegram Bot in a separate background thread
-    bot_thread = threading.Thread(target=run_telegram_bot)
+    # Start Telegram Bot in background thread
+    bot_thread = threading.Thread(target=run_bot_polling)
     bot_thread.daemon = True
     bot_thread.start()
 
-    # Run Flask Web Server on Render assigned PORT to prevent timeouts
+    # Run Flask Web Server
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
