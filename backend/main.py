@@ -25,13 +25,14 @@ async def micp_signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     chat_id = update.effective_chat.id
     await context.bot.send_message(
         chat_id=chat_id, 
-        text="🧠 <b>MICP-60 Engine Initiated:</b> Scanning 1 to 60 Minutes multi-timeframe intelligence across Forex pairs..."
+        text="🧠 <b>MICP-60 Engine Initiated:</b> Scanning all configured Forex pairs across 1 to 60 Minutes timeframes..."
     )
 
     oanda = OandaClient()
     db = DatabaseHandler()
 
-    for pair in INSTRUMENTS[:3]:
+    # Loop through ALL instruments defined in config.py
+    for pair in INSTRUMENTS:
         report_lines = [f"📊 <b>MICP-60 REPORT: {pair}</b>\n"]
         
         for tf_code, tf_name in TIMEFRAMES.items():
@@ -51,13 +52,13 @@ async def micp_signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         full_message = "\n".join(report_lines)
         await context.bot.send_message(chat_id=chat_id, text=full_message, parse_mode="HTML")
+        await asyncio.sleep(0.5)
 
 def run_telegram_polling():
     if not TELEGRAM_BOT_TOKEN:
         logger.error("❌ TELEGRAM_BOT_TOKEN is missing!")
         return
 
-    # Create a fresh event loop for this background thread and assign it
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
@@ -70,7 +71,6 @@ def run_telegram_polling():
         logger.info("✅ Telegram Bot polling started successfully via custom loop!")
         await application.updater.start_polling(drop_pending_updates=True)
         
-        # Keep the loop running
         stop_event = asyncio.Event()
         await stop_event.wait()
 
@@ -80,10 +80,8 @@ def run_telegram_polling():
         logger.error(f"❌ Error in Telegram polling loop: {e}")
 
 if __name__ == "__main__":
-    # Start Telegram Bot in a dedicated background thread
     bot_thread = threading.Thread(target=run_telegram_polling, daemon=True)
     bot_thread.start()
 
-    # Run Flask Web Server on Render assigned PORT
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
