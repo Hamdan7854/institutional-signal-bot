@@ -4,6 +4,27 @@ class MICPPredictionEngine:
     def __init__(self):
         self.feature_engine = MICPFeatureEngine()
 
+    def predict_next_candle(self, df):
+        """
+        Wrapper method to evaluate candles and return direction, confidence, and exp_close.
+        """
+        # Extract closes, highs, lows from dataframe or raw candles format
+        closes, highs, lows = self.feature_engine.process_features(df)
+        
+        if not closes or len(closes) < 10:
+            return "NO TRADE", 0.0, 0.0
+
+        # Run MICP-90 evaluation logic
+        direction, reason = self.evaluate_micp_90_signal(
+            {"M1": "BULLISH", "M5": "BULLISH", "M15": "BULLISH", "M30": "BULLISH", "H1": "BULLISH"}, 
+            closes, highs, lows
+        )
+        
+        confidence = 0.90 if direction != "NO TRADE" else 0.50
+        exp_close = closes[-1] if closes else 0.0
+        
+        return direction, confidence, exp_close
+
     def evaluate_micp_90_signal(self, tf_data, closes, highs, lows):
         # 1. Multi-timeframe agreement strength check
         bullish_count = sum(1 for t in tf_data.values() if t == "BULLISH")
@@ -29,8 +50,8 @@ class MICPPredictionEngine:
             return "NO TRADE", "At Support Zone"
 
         # 4. Candle Behavior (Body-to-Wick Ratio)
-        body = abs(closes[-1] - closes[-2])
-        total_range = highs[-1] - lows[-1]
+        body = abs(closes[-1] - closes[-2]) if len(closes) >= 2 else 0.0
+        total_range = highs[-1] - lows[-1] if highs and lows else 0.0
         if total_range > 0 and (body / total_range) < 0.60:
             return "NO TRADE", "Weak Candle Momentum / High Wicks"
 
