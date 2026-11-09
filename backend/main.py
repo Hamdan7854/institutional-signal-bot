@@ -234,6 +234,3 @@ def selftest():
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "run"
     {"run": run, "backtest": backtest, "selftest": selftest}[mode]()
-```[cite: 11]
-
-Iske baad Render par jaakar dobara deploy karein, ab saari files match ho jayengi aur bot bilkul theek chal padega!
