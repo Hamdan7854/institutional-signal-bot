@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 import numpy as np
 import config
-from micp_engine import MICPEngine
+from prediction.micp_engine import ... MICPEngine
 from micp_features import build_features
 
 
