@@ -149,6 +149,8 @@ class Bot:
 
 
 def run():
+    import health
+    health.start()                     # Render Web Service ke liye khula port (PORT env ho to)
     from oanda_client import OandaClient
     Bot(OandaClient(), DB()).run_forever()
 
