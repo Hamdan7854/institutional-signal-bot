@@ -4,8 +4,8 @@ import sys
 
 # ---- Preflight: missing / ghalat naam wali files ka saaf paigham (Render logs mein nazar aayega) ----
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_REQUIRED = ["config.py", "market_data.py", "strategy.py", "telegram_bot.py", "candle_builder.py",
-             "oanda_client.py", "database.py", "micp_features.py", "micp_engine.py", "health.py"]
+__REQUIRED = ["config.py", "market_data.py", "strategy.py", "telegram_bot.py", "candle_builder.py",
+             "oanda_client.py", "storage/database.py", "micp_features.py", "micp_engine.py", "health.py"]
 _missing = [f for f in _REQUIRED if not os.path.exists(os.path.join(_HERE, f))]
 if _missing:
     print("\n❌ YE FILES MISSING HAIN (naam bilkul exact hona chahiye, chhote huroof, underscore, .py):")
