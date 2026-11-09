@@ -100,6 +100,3 @@ def build_labels(df: pd.DataFrame) -> pd.Series:
     y[(t.shift(-1) - t) != pd.Timedelta(minutes=1)] = np.nan   # agli row asli agli minute nahi
     y.iloc[-1] = np.nan
     return y
-```[cite: 23]
-
-Aap isay save karke Render par dobara **Manual Deploy -> Clear build cache & deploy** kar dein, ab yeh module not found error bhi khatam ho jayega aur bot chal padega!
