@@ -31,7 +31,7 @@ class LogReg:
         self.l2 = config.L2 if l2 is None else l2
         self.w = self.mu = self.sd = None
 
-@staticmethod
+    @staticmethod
     def _sig(z):
         return 1 / (1 + np.exp(-np.clip(z, -30, 30)))
 
@@ -136,12 +136,12 @@ class MICPEngine:
         idx = np.where(ok.values)[0][-config.TRAIN_SIZE:]
         cut = int(len(idx) * (1 - config.CAL_FRACTION))
         m = LogReg().fit(X.values[idx[:cut]], y.values[idx[:cut]])
-        self.thr = pick_threshold(m.proba(X.values[idx[cut:]]), y.values[idx[cut:]])
+        self.thr = pick_threshold(m.proba(X.values[idx[cal_idx:] if 'cal_idx' in locals() else idx[cut:]]), y.values[idx[cut:]]) # safe fallback
         self.model = LogReg().fit(X.values[idx], y.values[idx])
         self.trained_at = time.time()
         return self.report
 
-@property
+    @property
     def has_edge(self):
         return bool(self.report and self.report["passed"] and self.thr is not None)
 
