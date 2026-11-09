@@ -1,5 +1,19 @@
 """Entry point. python main.py run -> live loop (OANDA demo data + Telegram signals + commands) python main.py backtest -> OANDA history par walk-forward report (40-sec snapshot timing) python main.py selftest -> synthetic data par pipeline check (API ki zaroorat nahi) Timing: har minute ke SIGNAL_SECOND (default :40) tak ka data dekh kar signal; Telegram par candle ke aakhri ~20 second mein jata hai; TRADE ENTRY agli candle ke :00 par."""
+import os
 import sys
+
+# ---- Preflight: missing / ghalat naam wali files ka saaf paigham (Render logs mein nazar aayega) ----
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_REQUIRED = ["config.py", "market_data.py", "strategy.py", "telegram_bot.py", "candle_builder.py",
+             "oanda_client.py", "database.py", "micp_features.py", "micp_engine.py", "health.py"]
+_missing = [f for f in _REQUIRED if not os.path.exists(os.path.join(_HERE, f))]
+if _missing:
+    print("\n❌ YE FILES MISSING HAIN (naam bilkul exact hona chahiye, chhote huroof, underscore, .py):")
+    for f in _missing:
+        print(" -", f)
+    print("📂 Is folder mein asal files:", sorted(os.listdir(_HERE)), "\n")
+    sys.exit(1)
+
 import threading
 import time
 import numpy as np
