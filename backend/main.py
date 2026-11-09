@@ -4,7 +4,7 @@ import sys
 
 # ---- Preflight: missing / ghalat naam wali files ka saaf paigham (Render logs mein nazar aayega) ----
 _HERE = os.path.dirname(os.path.abspath(__file__))
-__REQUIRED = ["config.py", "market_data.py", "strategy.py", "telegram_bot.py", "candle_builder.py",
+_REQUIRED = ["config.py", "market_data.py", "strategy.py", "telegram_bot.py", "candle_builder.py",
              "oanda_client.py", "storage/database.py", "micp_features.py", "micp_engine.py", "health.py"]
 _missing = [f for f in _REQUIRED if not os.path.exists(os.path.join(_HERE, f))]
 if _missing:
@@ -234,3 +234,6 @@ def selftest():
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "run"
     {"run": run, "backtest": backtest, "selftest": selftest}[mode]()
+```[cite: 11]
+
+Iske baad Render par jaakar dobara deploy karein, ab saari files match ho jayengi aur bot bilkul theek chal padega!
