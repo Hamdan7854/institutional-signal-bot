@@ -4,8 +4,9 @@ import sys
 
 # ---- Preflight: missing / ghalat naam wali files ka saaf paigham (Render logs mein nazar aayega) ----
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_REQUIRED = ["config.py", "market_data.py", "strategy.py", "telegram_bot.py", "candle_builder.py",
-             "oanda_client.py", "storage/database.py", "micp_features.py", "micp_engine.py", "health.py"]
+_REQUIRED = ["config.py", "market_data.py", "strategy.py", "telegram_bot.py", "health.py",
+             "data/candle_builder.py", "data/oanda_client.py", "storage/database.py",
+             "features/micp_features.py", "prediction/micp_engine.py"]
 _missing = [f for f in _REQUIRED if not os.path.exists(os.path.join(_HERE, f))]
 if _missing:
     print("\n❌ YE FILES MISSING HAIN (naam bilkul exact hona chahiye, chhote huroof, underscore, .py):")
@@ -22,7 +23,7 @@ import config
 import telegram_bot as tg
 from storage.database import DB
 from strategy import Strategy
-from micp_engine import walk_forward
+from prediction.micp_engine import walk_forward
 
 
 def sleep_to_second(sec):
@@ -165,12 +166,12 @@ class Bot:
 def run():
     import health
     health.start()                     # Render Web Service ke liye khula port (PORT env ho to)
-    from oanda_client import OandaClient
+    from data.oanda_client import OandaClient
     Bot(OandaClient(), DB()).run_forever()
 
 
 def backtest():
-    from oanda_client import OandaClient
+    from data.oanda_client import OandaClient
     from market_data import MarketData
     client = OandaClient()
     for sym in config.INSTRUMENTS:
@@ -207,7 +208,7 @@ def synthetic_s5(minutes, seed=2):
 
 
 def selftest():
-    from candle_builder import build_minutes
+    from data.candle_builder import build_minutes
     from strategy import spread_ok
     ok = True
     # 1) snapshot builder: minute ka snapshot close = S5 candle (sec 35) ki close; full_close = sec 55 ki close
