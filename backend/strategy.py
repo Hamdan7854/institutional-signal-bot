@@ -82,6 +82,3 @@ class Strategy:
         self.cooldown = config.COOLDOWN_CANDLES
         return Signal(self.symbol, direction, conf, float(df["close"].iloc[-1]),
                       last_t + np.timedelta64(1, "m"))
-```[cite: 21]
-
-Is file ko update karke commit karne ke baad Render par **Manual Deploy -> Clear build cache & deploy** karein, aapka deploy bina kisi error ke successfully build ho jayega!
