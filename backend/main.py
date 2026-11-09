@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 import config
 import telegram_bot as tg
-from database import DB
+from storage.database import DB
 from strategy import Strategy
 from micp_engine import walk_forward
 
