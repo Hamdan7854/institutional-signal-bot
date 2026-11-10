@@ -11,7 +11,14 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "") or os.getenv("TELEGRAM_
 TELEGRAM_BOT_CHAT_ID = os.getenv("TELEGRAM_BOT_CHAT_ID", "") or os.getenv("TELEGRAM_CHAT_ID", "")  # sirf is chat ki commands sunni jati hain
 
 # ---- Market ----------------------------------------------------------------
-INSTRUMENTS = os.getenv("INSTRUMENTS", "EUR_USD").split(",")
+INSTRUMENTS = os.getenv(
+    "INSTRUMENTS",
+    "EUR_USD,GBP_USD,USD_JPY,AUD_USD,USD_CHF,USD_CAD,"
+    "EUR_GBP,EUR_JPY,EUR_AUD,EUR_CHF,EUR_CAD,EUR_NZD,EUR_SEK,EUR_NOK,"
+    "GBP_JPY,GBP_AUD,GBP_CHF,GBP_CAD,"
+    "CHF_JPY,CAD_JPY,AUD_JPY,"
+    "AUD_CAD,CAD_CHF"
+).split(",")
 HISTORY_MINUTES = int(os.getenv("HISTORY_MINUTES", "2000"))  # Startup timeout bachane ke liye optimized
 TRADE_HOURS_UTC = list(range(7, 17))   # London + NY overlap
 
@@ -49,3 +56,6 @@ SPREAD_MULT = float(os.getenv("SPREAD_MULT", "2.5"))    # abhi ka spread <= 2.5 
 KILL_SWITCH_MIN_TRADES = 100
 COOLDOWN_CANDLES = 2
 DB_PATH = os.getenv("DB_PATH", "signals.db")
+```[cite: 20]
+
+Isay save karne ke baad bot in tamam pairs par ek sath scan shuru kar dega aur sab ke signals Telegram par milna shuru ho jayenge!
