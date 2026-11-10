@@ -15,6 +15,10 @@ if _missing:
     print("📂 Is folder mein asal files:", sorted(os.listdir(_HERE)), "\n")
     sys.exit(1)
 
+# Render port binding ke liye health server foran start karein
+import health
+health.start()
+
 import threading
 import time
 import numpy as np
@@ -164,14 +168,12 @@ class Bot:
 
 
 def run():
-    import health
-    health.start()                     # Render Web Service ke liye khula port (PORT env ho to)
     from data.oanda_client import OandaClient
     Bot(OandaClient(), DB()).run_forever()
 
 
 def backtest():
-    from data.oanda_client import OandaClient
+    from data.OandaClient import OandaClient
     from market_data import MarketData
     client = OandaClient()
     for sym in config.INSTRUMENTS:
@@ -225,7 +227,7 @@ def selftest():
     for label, edge in (("RANDOM WALK (edge=0)", 0.0), ("STRONG synthetic mean-reversion", 0.35)):
         rep = walk_forward(synthetic_minutes(40000, edge), train=6000, test=2000)
         print(f"{label}: trades={rep['trades']} hit={rep['hit_rate']:.2%} WilsonLB={rep['wilson_lb']:.2%} "
-              f"breakeven={rep['breakeven']:.2%} passed={rep['passed']}")
+              f"breakeven={rep['bre']:.2%} passed={rep['passed']}")
     # 4) S5 -> snapshot -> walk_forward (asli pipeline) random data par: gate fail hona chahiye
     rep = walk_forward(build_minutes(synthetic_s5(14000), 40), train=6000, test=2000)
     print(f"S5 snapshot pipeline (random): trades={rep['trades']} hit={rep['hit_rate']:.2%} passed={rep['passed']}")
