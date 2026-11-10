@@ -11,8 +11,10 @@ HOSTS = {
 
 class OandaClient:
     def __init__(self, token=None, env=None):
-        self.token = token or config.OANDA_API_KEY
-        self.base = HOSTS[env or config.OANDA_ENV]
+        self.token = token or getattr(config, "OANDA_API_KEY", None) or getattr(config, "OANDA_TOKEN", None)
+        env_val = env or getattr(config, "OANDA_ENVIRONMENT", None) or getattr(config, "OANDA_ENV", "practice")
+        self.base = HOSTS.get(env_val, HOSTS["practice"])
+        
         if not self.token:
             raise RuntimeError("OANDA_API_KEY set nahi hai (environment variable).")
         self.s = requests.Session()
@@ -50,6 +52,3 @@ class OandaClient:
             out = batch + out
             to_time = batch[0]["time"]
         return out[-n:]
-```[cite: 12]
-
-Aap isay apnay GitHub par **`backend/data/oanda_client.py`** mein update kar ke save kar dein. Render khud ba khud automatic deploy utha lega aur token ka masla foran hal ho jayega!
