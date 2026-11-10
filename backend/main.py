@@ -45,7 +45,7 @@ class Bot:
     def __init__(self, client, db):
         from market_data import MarketData
         self.client, self.db = client, db
-        self.books = {}            # sym -> dict(md, st, retraining, spread)
+        self.books = {}            # sym -> dict(md, st, retraining, spread, last_sig_time)
         self.manual_pause = False
         self.started = time.time()
         for sym in config.INSTRUMENTS:
@@ -54,7 +54,7 @@ class Bot:
             st = Strategy(sym, db)
             rep = st.retrain(md.df)
             tg.send(report_text(sym, rep, st.engine.thr))
-            self.books[sym] = dict(md=md, st=st, retraining=False, spread=(None, None))
+            self.books[sym] = dict(md=md, st=st, retraining=False, spread=(None, None), last_sig_time=0)
 
     # ---------- Telegram commands ----------
     def cmd_status(self):
@@ -94,17 +94,25 @@ class Bot:
     def cmd_signal(self):
         if self.manual_pause:
             return "⏸ Bot paused hai. Pehle /resume karein."
-        results = ["🔍 Manual Scan Results:"]
+        results = ["🔍 Manual Scan Results (Cooldown & Filters Active):"]
         found = 0
+        now = time.time()
         for sym, b in self.books.items():
             try:
+                # Cooldown check (10 minutes = 600 seconds)
+                if now - b["last_sig_time"] < 600:
+                    results.append(f"• {sym}: ⏳ Cooldown mein hai")
+                    continue
+
                 df, sp_now, sp_med = b["md"].snapshot()
                 b["spread"] = (sp_now, sp_med)
                 if df.empty:
                     results.append(f"• {sym}: Data nahi mila")
                     continue
+                
                 sig = b["st"].on_candle(df, sp_now, sp_med)
                 if sig:
+                    b["last_sig_time"] = now
                     found += 1
                     entry_t = pd.Timestamp(sig.target_time).strftime("%H:%M:00")
                     tg.send(f"📶 {sym} {sig.direction} | 1 min\nENTRY: {entry_t} UTC\nConfidence: {sig.confidence:.1%}")
@@ -114,7 +122,7 @@ class Bot:
             except Exception as e:
                 results.append(f"• {sym}: Error")
         if found == 0:
-            results.append("\n❌ Filhal kisi pair par edge nahi mili.")
+            results.append("\n❌ Filhal kisi pair par edge nahi mili ya cooldown active hai.")
         return "\n".join(results)
 
     def cmd_help(self):
@@ -156,6 +164,7 @@ class Bot:
             b["retraining"] = False
 
     def tick(self):
+        now = time.time()
         for sym, b in self.books.items():
             try:
                 df, sp_now, sp_med = b["md"].snapshot()
@@ -174,8 +183,14 @@ class Bot:
                 if sec_now > config.LATEST_SIGNAL_SECOND:
                     b["st"].last_reason = f"too_late ({sec_now:.0f}s)"
                     continue
+                
+                # Cooldown check for background ticks as well
+                if now - b["last_sig_time"] < 600:
+                    continue
+
                 sig = b["st"].on_candle(df, sp_now, sp_med)
                 if sig:
+                    b["last_sig_time"] = now
                     self.db.add_signal(sym, sig.direction, sig.confidence, sig.target_time, sig.entry)
                     entry_t = pd.Timestamp(sig.target_time).strftime("%H:%M:00")
                     tg.send(f"📶 {sym} {sig.direction} | 1 min\n"
