@@ -1,21 +1,19 @@
-"""Entry point. python main.py run -> live loop (OANDA demo data + Telegram signals + commands) python main.py backtest -> OANDA history par walk-forward report (40-sec snapshot timing) python main.py selftest -> synthetic data par pipeline check (API ki zaroorat nahi) Timing: har minute ke SIGNAL_SECOND (default :40) tak ka data dekh kar signal; Telegram par candle ke aakhri ~20 second mein jata hai; TRADE ENTRY agli candle ke :00 par."""
+"""Entry point. python main.py run -> live loop (OANDA demo data + Telegram signals + commands)"""
 import os
 import sys
 
-# ---- Preflight: missing / ghalat naam wali files ka saaf paigham (Render logs mein nazar aayega) ----
+# ---- Preflight: missing files check ----
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REQUIRED = ["config.py", "market_data.py", "strategy.py", "telegram_bot.py", "health.py",
              "data/candle_builder.py", "data/oanda_client.py", "storage/database.py",
              "features/micp_features.py", "prediction/micp_engine.py"]
 _missing = [f for f in _REQUIRED if not os.path.exists(os.path.join(_HERE, f))]
 if _missing:
-    print("\n❌ YE FILES MISSING HAIN (naam bilkul exact hona chahiye, chhote huroof, underscore, .py):")
+    print("\n❌ YE FILES MISSING HAIN:")
     for f in _missing:
         print(" -", f)
-    print("📂 Is folder mein asal files:", sorted(os.listdir(_HERE)), "\n")
     sys.exit(1)
 
-# Render port binding ke liye health server foran start karein
 import health
 health.start()
 
@@ -45,7 +43,7 @@ class Bot:
     def __init__(self, client, db):
         from market_data import MarketData
         self.client, self.db = client, db
-        self.books = {}            # sym -> dict(md, st, retraining, spread, last_sig_time)
+        self.books = {}
         self.manual_pause = False
         self.started = time.time()
         for sym in config.INSTRUMENTS:
@@ -54,7 +52,7 @@ class Bot:
             st = Strategy(sym, db)
             rep = st.retrain(md.df)
             tg.send(report_text(sym, rep, st.engine.thr))
-            self.books[sym] = dict(md=md, st=st, retraining=False, spread=(None, None), last_sig_time=0)
+            self.books[sym] = dict(md=md, st=st, retraining=False, spread=(None, None))
 
     # ---------- Telegram commands ----------
     def cmd_status(self):
@@ -94,35 +92,28 @@ class Bot:
     def cmd_signal(self):
         if self.manual_pause:
             return "⏸ Bot paused hai. Pehle /resume karein."
-        results = ["🔍 Manual Scan Results (Cooldown & Filters Active):"]
+        results = ["🔍 Manual Scan Results (ADX / Regime Strategy):"]
         found = 0
-        now = time.time()
         for sym, b in self.books.items():
             try:
-                # Cooldown check (10 minutes = 600 seconds)
-                if now - b["last_sig_time"] < 600:
-                    results.append(f"• {sym}: ⏳ Cooldown mein hai")
-                    continue
-
                 df, sp_now, sp_med = b["md"].snapshot()
                 b["spread"] = (sp_now, sp_med)
                 if df.empty:
                     results.append(f"• {sym}: Data nahi mila")
                     continue
-                
                 sig = b["st"].on_candle(df, sp_now, sp_med)
                 if sig:
-                    b["last_sig_time"] = now
                     found += 1
                     entry_t = pd.Timestamp(sig.target_time).strftime("%H:%M:00")
                     tg.send(f"📶 {sym} {sig.direction} | 1 min\nENTRY: {entry_t} UTC\nConfidence: {sig.confidence:.1%}")
                     results.append(f"• {sym}: 🟢 SIGNAL ({sig.direction})")
                 else:
-                    results.append(f"• {sym}: ⏳ No edge")
+                    reason = getattr(b["st"], 'last_reason', 'No edge')
+                    results.append(f"• {sym}: ⏳ No signal ({reason})")
             except Exception as e:
                 results.append(f"• {sym}: Error")
         if found == 0:
-            results.append("\n❌ Filhal kisi pair par edge nahi mili ya cooldown active hai.")
+            results.append("\n❌ Filhal kisi pair par setup nahi mila.")
         return "\n".join(results)
 
     def cmd_help(self):
@@ -164,7 +155,6 @@ class Bot:
             b["retraining"] = False
 
     def tick(self):
-        now = time.time()
         for sym, b in self.books.items():
             try:
                 df, sp_now, sp_med = b["md"].snapshot()
@@ -183,14 +173,8 @@ class Bot:
                 if sec_now > config.LATEST_SIGNAL_SECOND:
                     b["st"].last_reason = f"too_late ({sec_now:.0f}s)"
                     continue
-                
-                # Cooldown check for background ticks as well
-                if now - b["last_sig_time"] < 600:
-                    continue
-
                 sig = b["st"].on_candle(df, sp_now, sp_med)
                 if sig:
-                    b["last_sig_time"] = now
                     self.db.add_signal(sym, sig.direction, sig.confidence, sig.target_time, sig.entry)
                     entry_t = pd.Timestamp(sig.target_time).strftime("%H:%M:00")
                     tg.send(f"📶 {sym} {sig.direction} | 1 min\n"
@@ -202,7 +186,7 @@ class Bot:
 
     def run_forever(self):
         tg.start_listener(self.handlers())
-        tg.send(f"✅ Bot live. /signal command se abhi scan kar sakte hain. /help dekhein.")
+        tg.send(f"✅ Bot live with Regime Strategy (ADX/BB/EMA). /signal se manual scan karein.")
         while True:
             sleep_to_second(config.SIGNAL_SECOND + config.FETCH_DELAY)
             self.tick()
@@ -224,53 +208,6 @@ def backtest():
         print(report_text(sym, rep, None))
 
 
-# ------------------------------------------------------------------ selftest
-def synthetic_minutes(n, edge=0.0, seed=1):
-    rng = np.random.default_rng(seed)
-    r = np.zeros(n)
-    noise = rng.normal(0, 1e-4, n)
-    for i in range(1, n):
-        r[i] = -edge * r[i - 1] + noise[i]
-    close = 1.1 + np.cumsum(r)
-    open_ = np.r_[1.1, close[:-1]]
-    hi = np.maximum(open_, close) + np.abs(rng.normal(0, 3e-5, n))
-    lo = np.minimum(open_, close) - np.abs(rng.normal(0, 3e-5, n))
-    t = pd.date_range("2025-01-06", periods=n, freq="min", tz="UTC")
-    return pd.DataFrame(dict(time=t, open=open_, high=hi, low=lo, close=close,
-                             volume=rng.integers(20, 200, n).astype(float)))
-
-
-def synthetic_s5(minutes, seed=2):
-    rng = np.random.default_rng(seed)
-    n = minutes * 12
-    c = 1.1 + np.cumsum(rng.normal(0, 3e-5, n))
-    o = np.r_[1.1, c[:-1]]
-    t = pd.date_range("2025-01-06", periods=n, freq="5s", tz="UTC")
-    return pd.DataFrame(dict(time=t, open=o, high=np.maximum(o, c) + 1e-5, low=np.minimum(o, c) - 1e-5,
-                             close=c, volume=rng.integers(1, 30, n).astype(float), complete=True))
-
-
-def selftest():
-    from data.candle_builder import build_minutes
-    from strategy import spread_ok
-    ok = True
-    s5 = synthetic_s5(50)
-    m = build_minutes(s5, 40)
-    row, first = m.iloc[10], s5.iloc[120:132]
-    chk = (np.isclose(row["open"], first["open"].iloc[0]) and np.isclose(row["close"], first["close"].iloc[7])
-           and np.isclose(row["full_close"], first["close"].iloc[11]) and np.isclose(row["high"], first["high"].iloc[:8].max()))
-    print("snapshot builder correct:", bool(chk)); ok &= bool(chk)
-    sf = (spread_ok(0.8, 0.7) and not spread_ok(2.5, 0.7) and not spread_ok(1.2, 0.3) and not spread_ok(None, None))
-    print("spread filter correct:", sf); ok &= sf
-    for label, edge in (("RANDOM WALK (edge=0)", 0.0), ("STRONG synthetic mean-reversion", 0.35)):
-        rep = walk_forward(synthetic_minutes(40000, edge), train=6000, test=2000)
-        print(f"{label}: trades={rep['trades']} hit={rep['hit_rate']:.2%} WilsonLB={rep['wilson_lb']:.2%} "
-              f"breakeven={rep['breakeven']:.2%} passed={rep['passed']}")
-    rep = walk_forward(build_minutes(synthetic_s5(14000), 40), train=6000, test=2000)
-    print(f"S5 snapshot pipeline (random): trades={rep['trades']} hit={rep['hit_rate']:.2%} passed={rep['passed']}")
-    print("SELFTEST", "OK" if ok else "FAILED")
-
-
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "run"
-    {"run": run, "backtest": backtest, "selftest": selftest}[mode]()
+    {"run": run, "backtest": backtest}[mode]()
