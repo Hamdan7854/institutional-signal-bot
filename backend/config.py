@@ -23,7 +23,6 @@ HISTORY_MINUTES = int(os.getenv("HISTORY_MINUTES", "2000"))  # Startup timeout b
 TRADE_HOURS_UTC = list(range(7, 17))   # London + NY overlap
 
 # ---- Signal timing ---------------------------------------------------------
-# Candle ke 40wen second tak ka data dekh kar signal; entry agli candle ke :00 par.
 SIGNAL_SECOND = int(os.getenv("SIGNAL_SECOND", "40"))   # 40 = candle ke aakhri 20 second ka aaghaz
 FETCH_DELAY = 1.0                                       # S5 candle complete hone ka intezar (sec)
 LATEST_SIGNAL_SECOND = 56                               # is ke baad signal nahi bhejna (bahut late)
@@ -43,8 +42,6 @@ WILSON_Z = 1.64
 RETRAIN_EVERY_MIN = int(os.getenv("RETRAIN_EVERY_MIN", "720"))
 
 # ---- Multi-timeframe -------------------------------------------------------
-# MTF features hamesha model ko diye jate hain (M5/M15 trend, momentum).
-# MTF_FILTER="align" ho to signal sirf M15 trend ki direction mein aayega (backtest gate is ko bhi naapta hai).
 MTF_FILTER = os.getenv("MTF_FILTER", "off")             # off | align
 
 # ---- Spread filter ---------------------------------------------------------
@@ -56,6 +53,3 @@ SPREAD_MULT = float(os.getenv("SPREAD_MULT", "2.5"))    # abhi ka spread <= 2.5 
 KILL_SWITCH_MIN_TRADES = 100
 COOLDOWN_CANDLES = 2
 DB_PATH = os.getenv("DB_PATH", "signals.db")
-```[cite: 20]
-
-Isay save karne ke baad bot in tamam pairs par ek sath scan shuru kar dega aur sab ke signals Telegram par milna shuru ho jayenge!
