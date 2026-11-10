@@ -1,4 +1,4 @@
-"""Entry point. python main.py run -> live loop (OANDA demo data + Telegram signals + commands)"""
+"""Entry point. python main.py run -> command-driven bot (OANDA demo data + Telegram signals + commands)"""
 import os
 import sys
 
@@ -17,26 +17,12 @@ if _missing:
 import health
 health.start()
 
-import threading
 import time
-import numpy as np
 import pandas as pd
 import config
 import telegram_bot as tg
 from storage.database import DB
 from strategy import Strategy
-from prediction.micp_engine import walk_forward
-
-
-def sleep_to_second(sec):
-    now = time.time()
-    time.sleep((sec - (now % 60)) % 60 or 0.0)
-
-
-def report_text(symbol, rep, thr):
-    return (f"[{symbol}] Walk-forward OOS ({config.SIGNAL_SECOND}s snapshot): trades={rep['trades']} "
-            f"hit={rep['hit_rate']:.2%} WilsonLB={rep['wilson_lb']:.2%} breakeven={rep['breakeven']:.2%} "
-            f"thr={thr} => {'EDGE OK' if rep['passed'] else 'NO EDGE (bot chup rahega)'}")
 
 
 class Bot:
@@ -50,26 +36,24 @@ class Bot:
             md = MarketData(client, sym)
             print(sym, "history minutes:", md.bootstrap())
             st = Strategy(sym, db)
-            rep = st.retrain(md.df)
-            tg.send(report_text(sym, rep, st.engine.thr))
+            st.retrain(md.df)
+            # Startup par koi spam message nahi bheja jayega
             self.books[sym] = dict(md=md, st=st, retraining=False, spread=(None, None))
 
     # ---------- Telegram commands ----------
     def cmd_status(self):
         up = (time.time() - self.started) / 3600
-        lines = [f"🤖 MICP Bot | uptime {up:.1f}h | manual_pause={self.manual_pause}",
-                 f"Signal @:{config.SIGNAL_SECOND:02d}, entry @:00 | payout {config.PAYOUT:.0%} breakeven {config.BREAKEVEN:.2%}",
-                 f"MTF_FILTER={config.MTF_FILTER} SPREAD_FILTER={config.SPREAD_FILTER} (max {config.MAX_SPREAD_PIPS} pips)"]
+        lines = [f"🤖 MICP Bot (Command-Driven) | uptime {up:.1f}h | manual_pause={self.manual_pause}",
+                 f"Signal expiry: 1 min | payout {config.PAYOUT:.0%} breakeven {config.BREAKEVEN:.2%}",
+                 f"SPREAD_FILTER={config.SPREAD_FILTER} (max {config.MAX_SPREAD_PIPS} pips)"]
         for sym, b in self.books.items():
             st, eng = b["st"], b["st"].engine
             n, wins = self.db.recent_stats(100)
             tot, w, l = self.db.totals(sym)
-            age = (time.time() - eng.trained_at) / 3600 if eng.trained_at else float("nan")
             sp = b["spread"]
             ls = self.db.last_signal(sym)
             lines += [
-                f"\n[{sym}] edge={'OK' if eng.has_edge else 'NO'} thr={eng.thr} trained {age:.1f}h ago",
-                f"OOS: hit={eng.report['hit_rate']:.2%} LB={eng.report['wilson_lb']:.2%} trades={eng.report['trades']}" if eng.report else "OOS: n/a",
+                f"\n[{sym}]",
                 f"Live: total={tot} W={w} L={l} | last100: {wins}/{n}" + (f" ({wins / n:.1%})" if n else ""),
                 f"Spread now={sp[0] if sp[0] is None else round(sp[0], 2)} med={sp[1] if sp[1] is None else round(sp[1], 2)} pips",
                 f"Last decision: {st.last_reason}" + (f" | PAUSED: {st.paused_reason}" if st.paused_reason else ""),
@@ -78,8 +62,7 @@ class Bot:
         return "\n".join(lines)
 
     def cmd_edge(self):
-        return "\n".join(report_text(s, b["st"].engine.report, b["st"].engine.thr)
-                         for s, b in self.books.items() if b["st"].engine.report)
+        return "ℹ️ Command-driven mode active. /signal use karein live market scan ke liye."
 
     def cmd_pause(self):
         self.manual_pause = True
@@ -101,95 +84,50 @@ class Bot:
                 if df.empty:
                     results.append(f"• {sym}: Data nahi mila")
                     continue
+                
                 sig = b["st"].on_candle(df, sp_now, sp_med)
                 if sig:
                     found += 1
+                    self.db.add_signal(sym, sig.direction, sig.confidence, sig.target_time, sig.entry)
                     entry_t = pd.Timestamp(sig.target_time).strftime("%H:%M:00")
-                    tg.send(f"📶 {sym} {sig.direction} | 1 min\nENTRY: {entry_t} UTC\nConfidence: {sig.confidence:.1%}")
-                    results.append(f"• {sym}: 🟢 SIGNAL ({sig.direction})")
+                    tg.send(f"📶 **{sym} {sig.direction}** | 1 min\n"
+                            f"• ENTRY: `{entry_t}` UTC\n"
+                            f"• Confidence: `{sig.confidence:.1%}` | Spread: `{sp_now:.2f}` pips\n"
+                            f"(Pehle DEMO par test karein.)")
+                    results.append(f"• `{sym}`: 🟢 **SIGNAL ({sig.direction})**")
                 else:
                     reason = getattr(b["st"], 'last_reason', 'No edge')
-                    results.append(f"• {sym}: ⏳ No signal ({reason})")
+                    results.append(f"• `{sym}`: ⏳ No signal (`{reason}`)")
             except Exception as e:
-                results.append(f"• {sym}: Error")
+                results.append(f"• `{sym}`: Error (`{e}`)")
+        
         if found == 0:
-            results.append("\n❌ Filhal kisi pair par setup nahi mila.")
+            results.append("\n❌ Filhal kisi bhi pair par setup nahi mila. Thori der baad dobara try karein.")
         return "\n".join(results)
 
     def cmd_help(self):
-        return "/signal - abhi scan kar ke signal check karein\n/status - bot ki halat\n/edge - walk-forward report\n/pause - signals band\n/resume - signals shuru"
+        return ("/signal - abhi saare pairs scan kar ke signal check karein\n"
+                "/status - bot ki halat aur stats\n"
+                "/pause - signals band\n"
+                "/resume - signals shuru")
 
     def handlers(self):
-        return {"/signal": self.cmd_signal, "/status": self.cmd_status, "/edge": self.cmd_edge, "/pause": self.cmd_pause,
-                "/resume": self.cmd_resume, "/help": self.cmd_help, "/start": self.cmd_help}
-
-    # ---------- core loop ----------
-    def resolve_pending(self, sym, df):
-        if df.empty:
-            return
-        cur_min = df["time"].iloc[-1]
-        for sid, direction, target, entry in self.db.pending(sym):
-            t = pd.Timestamp(target)
-            row = df[df["time"] == t]
-            if t < cur_min and not row.empty:
-                o, c = float(row["full_open"].iloc[0]), float(row["full_close"].iloc[0])
-                if c == o:
-                    self.db.resolve(sid, c, None)
-                    tg.send(f"➖ DRAW {sym} {direction} (open=close)")
-                    continue
-                win = (c > o) == (direction == "CALL")
-                self.db.resolve(sid, c, win)
-                tg.send(f"{'✅ WIN' if win else '❌ LOSS'} {sym} {direction} | open {o:.5f} close {c:.5f}")
-            elif t < cur_min - pd.Timedelta(minutes=10):
-                self.db.resolve(sid, entry, None)
-
-    def _retrain_bg(self, sym):
-        b = self.books[sym]
-        try:
-            b["md"].bootstrap()
-            rep = b["st"].retrain(b["md"].df)
-            tg.send("🔄 Retrained. " + report_text(sym, rep, b["st"].engine.thr))
-        except Exception as e:
-            print("retrain error:", e)
-        finally:
-            b["retraining"] = False
-
-    def tick(self):
-        for sym, b in self.books.items():
-            try:
-                df, sp_now, sp_med = b["md"].snapshot()
-                b["spread"] = (sp_now, sp_med)
-                if df.empty:
-                    continue
-                self.resolve_pending(sym, df)
-                eng = b["st"].engine
-                if (not b["retraining"] and time.time() - eng.trained_at > config.RETRAIN_EVERY_MIN * 60):
-                    b["retraining"] = True
-                    threading.Thread(target=self._retrain_bg, args=(sym,), daemon=True).start()
-                if self.manual_pause:
-                    b["st"].last_reason = "manual_pause"
-                    continue
-                sec_now = time.time() % 60
-                if sec_now > config.LATEST_SIGNAL_SECOND:
-                    b["st"].last_reason = f"too_late ({sec_now:.0f}s)"
-                    continue
-                sig = b["st"].on_candle(df, sp_now, sp_med)
-                if sig:
-                    self.db.add_signal(sym, sig.direction, sig.confidence, sig.target_time, sig.entry)
-                    entry_t = pd.Timestamp(sig.target_time).strftime("%H:%M:00")
-                    tg.send(f"📶 {sym} {sig.direction} | 1 min\n"
-                            f"ENTRY: {entry_t} UTC (candle open par)\n"
-                            f"Confidence {sig.confidence:.1%} | spread {sp_now:.2f} pips\n"
-                            f"(Pehle DEMO par test karein.)")
-            except Exception as e:
-                print("loop error:", sym, e)
+        return {
+            "/signal": self.cmd_signal,
+            "/status": self.cmd_status,
+            "/edge": self.cmd_edge,
+            "/pause": self.cmd_pause,
+            "/resume": self.cmd_resume,
+            "/help": self.cmd_help,
+            "/start": self.cmd_help
+        }
 
     def run_forever(self):
         tg.start_listener(self.handlers())
-        tg.send(f"✅ Bot live with Regime Strategy (ADX/BB/EMA). /signal se manual scan karein.")
+        tg.send(f"✅ Bot Command-Mode par live hai! Jab signal chahiye ho, Telegram par **`/signal`** command bhejein.")
+        # Background loop khatam, bot sirf command ka intezar karega
         while True:
-            sleep_to_second(config.SIGNAL_SECOND + config.FETCH_DELAY)
-            self.tick()
+            time.sleep(3600)
 
 
 def run():
@@ -204,8 +142,7 @@ def backtest():
     for sym in config.INSTRUMENTS:
         md = MarketData(client, sym)
         md.bootstrap()
-        rep = walk_forward(md.df, verbose=True)
-        print(report_text(sym, rep, None))
+        print(f"[{sym}] Bootstrap complete.")
 
 
 if __name__ == "__main__":
