@@ -250,4 +250,12 @@ def selftest():
     for label, edge in (("RANDOM WALK (edge=0)", 0.0), ("STRONG synthetic mean-reversion", 0.35)):
         rep = walk_forward(synthetic_minutes(40000, edge), train=6000, test=2000)
         print(f"{label}: trades={rep['trades']} hit={rep['hit_rate']:.2%} WilsonLB={rep['wilson_lb']:.2%} "
-              f"breakeven={rep['breakeven']:.2%} passed={
+              f"breakeven={rep['breakeven']:.2%} passed={rep['passed']}")
+    rep = walk_forward(build_minutes(synthetic_s5(14000), 40), train=6000, test=2000)
+    print(f"S5 snapshot pipeline (random): trades={rep['trades']} hit={rep['hit_rate']:.2%} passed={rep['passed']}")
+    print("SELFTEST", "OK" if ok else "FAILED")
+
+
+if __name__ == "__main__":
+    mode = sys.argv[1] if len(sys.argv) > 1 else "run"
+    {"run": run, "backtest": backtest, "selftest": selftest}[mode]()
