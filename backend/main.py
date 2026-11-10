@@ -37,7 +37,6 @@ class Bot:
             print(sym, "history minutes:", md.bootstrap())
             st = Strategy(sym, db)
             st.retrain(md.df)
-            # Startup par koi spam message nahi bheja jayega
             self.books[sym] = dict(md=md, st=st, retraining=False, spread=(None, None))
 
     # ---------- Telegram commands ----------
@@ -82,7 +81,7 @@ class Bot:
                 df, sp_now, sp_med = b["md"].snapshot()
                 b["spread"] = (sp_now, sp_med)
                 if df.empty:
-                    results.append(f"• {sym}: Data nahi mila")
+                    results.append(f"• `{sym}`: Data nahi mila")
                     continue
                 
                 sig = b["st"].on_candle(df, sp_now, sp_med)
@@ -90,11 +89,15 @@ class Bot:
                     found += 1
                     self.db.add_signal(sym, sig.direction, sig.confidence, sig.target_time, sig.entry)
                     entry_t = pd.Timestamp(sig.target_time).strftime("%H:%M:00")
-                    tg.send(f"📶 **{sym} {sig.direction}** | 1 min\n"
+                    
+                    # Formatting: BUY -> Green Circle (🟢), SELL -> Red Circle (🔴)
+                    icon = "🟢" if sig.direction == "BUY" else "🔴"
+                    
+                    tg.send(f"📶 **{sym} {sig.direction}** {icon} | 1 min\n"
                             f"• ENTRY: `{entry_t}` UTC\n"
                             f"• Confidence: `{sig.confidence:.1%}` | Spread: `{sp_now:.2f}` pips\n"
                             f"(Pehle DEMO par test karein.)")
-                    results.append(f"• `{sym}`: 🟢 **SIGNAL ({sig.direction})**")
+                    results.append(f"• `{sym}`: {icon} **SIGNAL ({sig.direction})**")
                 else:
                     reason = getattr(b["st"], 'last_reason', 'No edge')
                     results.append(f"• `{sym}`: ⏳ No signal (`{reason}`)")
@@ -125,7 +128,6 @@ class Bot:
     def run_forever(self):
         tg.start_listener(self.handlers())
         tg.send(f"✅ Bot Command-Mode par live hai! Jab signal chahiye ho, Telegram par **`/signal`** command bhejein.")
-        # Background loop khatam, bot sirf command ka intezar karega
         while True:
             time.sleep(3600)
 
