@@ -91,11 +91,37 @@ class Bot:
         self.manual_pause = False
         return "▶️ Signals dobara shuru."
 
+    def cmd_signal(self):
+        if self.manual_pause:
+            return "⏸ Bot paused hai. Pehle /resume karein."
+        results = ["🔍 Manual Scan Results:"]
+        found = 0
+        for sym, b in self.books.items():
+            try:
+                df, sp_now, sp_med = b["md"].snapshot()
+                b["spread"] = (sp_now, sp_med)
+                if df.empty:
+                    results.append(f"• {sym}: Data nahi mila")
+                    continue
+                sig = b["st"].on_candle(df, sp_now, sp_med)
+                if sig:
+                    found += 1
+                    entry_t = pd.Timestamp(sig.target_time).strftime("%H:%M:00")
+                    tg.send(f"📶 {sym} {sig.direction} | 1 min\nENTRY: {entry_t} UTC\nConfidence: {sig.confidence:.1%}")
+                    results.append(f"• {sym}: 🟢 SIGNAL ({sig.direction})")
+                else:
+                    results.append(f"• {sym}: ⏳ No edge")
+            except Exception as e:
+                results.append(f"• {sym}: Error")
+        if found == 0:
+            results.append("\n❌ Filhal kisi pair par edge nahi mili.")
+        return "\n".join(results)
+
     def cmd_help(self):
-        return "/status - bot ki halat\n/edge - walk-forward report\n/pause - signals band\n/resume - signals shuru"
+        return "/signal - abhi scan kar ke signal check karein\n/status - bot ki halat\n/edge - walk-forward report\n/pause - signals band\n/resume - signals shuru"
 
     def handlers(self):
-        return {"/status": self.cmd_status, "/edge": self.cmd_edge, "/pause": self.cmd_pause,
+        return {"/signal": self.cmd_signal, "/status": self.cmd_status, "/edge": self.cmd_edge, "/pause": self.cmd_pause,
                 "/resume": self.cmd_resume, "/help": self.cmd_help, "/start": self.cmd_help}
 
     # ---------- core loop ----------
@@ -116,7 +142,7 @@ class Bot:
                 self.db.resolve(sid, c, win)
                 tg.send(f"{'✅ WIN' if win else '❌ LOSS'} {sym} {direction} | open {o:.5f} close {c:.5f}")
             elif t < cur_min - pd.Timedelta(minutes=10):
-                self.db.resolve(sid, entry, None)          # data nahi mila, atka hua signal band
+                self.db.resolve(sid, entry, None)
 
     def _retrain_bg(self, sym):
         b = self.books[sym]
@@ -161,7 +187,7 @@ class Bot:
 
     def run_forever(self):
         tg.start_listener(self.handlers())
-        tg.send(f"✅ Bot live. Signals har minute :{config.SIGNAL_SECOND:02d} ke baad, entry :00 par. /help dekhein.")
+        tg.send(f"✅ Bot live. /signal command se abhi scan kar sakte hain. /help dekhein.")
         while True:
             sleep_to_second(config.SIGNAL_SECOND + config.FETCH_DELAY)
             self.tick()
@@ -173,7 +199,7 @@ def run():
 
 
 def backtest():
-    from data.OandaClient import OandaClient
+    from data.oanda_client import OandaClient
     from market_data import MarketData
     client = OandaClient()
     for sym in config.INSTRUMENTS:
@@ -213,22 +239,18 @@ def selftest():
     from data.candle_builder import build_minutes
     from strategy import spread_ok
     ok = True
-    # 1) snapshot builder: minute ka snapshot close = S5 candle (sec 35) ki close; full_close = sec 55 ki close
     s5 = synthetic_s5(50)
     m = build_minutes(s5, 40)
     row, first = m.iloc[10], s5.iloc[120:132]
     chk = (np.isclose(row["open"], first["open"].iloc[0]) and np.isclose(row["close"], first["close"].iloc[7])
            and np.isclose(row["full_close"], first["close"].iloc[11]) and np.isclose(row["high"], first["high"].iloc[:8].max()))
     print("snapshot builder correct:", bool(chk)); ok &= bool(chk)
-    # 2) spread filter
     sf = (spread_ok(0.8, 0.7) and not spread_ok(2.5, 0.7) and not spread_ok(1.2, 0.3) and not spread_ok(None, None))
     print("spread filter correct:", sf); ok &= sf
-    # 3) gate: random walk fail, strong synthetic edge pass
     for label, edge in (("RANDOM WALK (edge=0)", 0.0), ("STRONG synthetic mean-reversion", 0.35)):
         rep = walk_forward(synthetic_minutes(40000, edge), train=6000, test=2000)
         print(f"{label}: trades={rep['trades']} hit={rep['hit_rate']:.2%} WilsonLB={rep['wilson_lb']:.2%} "
-              f"breakeven={rep['bre']:.2%} passed={rep['passed']}")
-    # 4) S5 -> snapshot -> walk_forward (asli pipeline) random data par: gate fail hona chahiye
+              f"breakeven={rep['breakeven']:.2%} passed={rep['passed']}")
     rep = walk_forward(build_minutes(synthetic_s5(14000), 40), train=6000, test=2000)
     print(f"S5 snapshot pipeline (random): trades={rep['trades']} hit={rep['hit_rate']:.2%} passed={rep['passed']}")
     print("SELFTEST", "OK" if ok else "FAILED")
@@ -237,3 +259,4 @@ def selftest():
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "run"
     {"run": run, "backtest": backtest, "selftest": selftest}[mode]()
+```[cite: 14]
