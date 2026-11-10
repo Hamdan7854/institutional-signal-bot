@@ -2,12 +2,13 @@
 import os
 
 # ---- OANDA (sirf PRACTICE/demo account) -----------------------------------
-OANDA_TOKEN = os.getenv("OANDA_TOKEN", "")
-OANDA_ENV = os.getenv("OANDA_ENV", "practice")  # practice | live (data ke liye practice kafi hai)
+OANDA_API_KEY = os.getenv("OANDA_API_KEY", "") or os.getenv("OANDA_TOKEN", "")
+OANDA_ACCOUNT_ID = os.getenv("OANDA_ACCOUNT_ID", "")
+OANDA_ENVIRONMENT = os.getenv("OANDA_ENVIRONMENT", "practice")  # practice | live
 
 # ---- Telegram --------------------------------------------------------------
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")  # sirf is chat ki commands sunni jati hain
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "") or os.getenv("TELEGRAM_TOKEN", "")
+TELEGRAM_BOT_CHAT_ID = os.getenv("TELEGRAM_BOT_CHAT_ID", "") or os.getenv("TELEGRAM_CHAT_ID", "")  # sirf is chat ki commands sunni jati hain
 
 # ---- Market ----------------------------------------------------------------
 INSTRUMENTS = os.getenv("INSTRUMENTS", "EUR_USD").split(",")
@@ -48,3 +49,6 @@ SPREAD_MULT = float(os.getenv("SPREAD_MULT", "2.5"))    # abhi ka spread <= 2.5 
 KILL_SWITCH_MIN_TRADES = 100
 COOLDOWN_CANDLES = 2
 DB_PATH = os.getenv("DB_PATH", "signals.db")
+```[cite: 12]
+
+Aap isay apnay GitHub par **`backend/config.py`** mein update kar ke save karein. Ab Render par saare environment variables bilkul sahi tarah match ho jayenge aur deployment successful ho kar bot live ho jayega!
