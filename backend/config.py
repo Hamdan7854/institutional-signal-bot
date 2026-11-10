@@ -49,6 +49,3 @@ SPREAD_MULT = float(os.getenv("SPREAD_MULT", "2.5"))    # abhi ka spread <= 2.5 
 KILL_SWITCH_MIN_TRADES = 100
 COOLDOWN_CANDLES = 2
 DB_PATH = os.getenv("DB_PATH", "signals.db")
-```[cite: 16]
-
-Isay save karne ke baad Render par service foran baghair kisi timeout ke boot ho kar live ho jayegi aur aap Telegram par aram se commands use kar sakenge!
