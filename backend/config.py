@@ -12,7 +12,7 @@ TELEGRAM_BOT_CHAT_ID = os.getenv("TELEGRAM_BOT_CHAT_ID", "") or os.getenv("TELEG
 
 # ---- Market ----------------------------------------------------------------
 INSTRUMENTS = os.getenv("INSTRUMENTS", "EUR_USD").split(",")
-HISTORY_MINUTES = int(os.getenv("HISTORY_MINUTES", "30000"))  # ~3 hafte (S5 se banta hai)
+HISTORY_MINUTES = int(os.getenv("HISTORY_MINUTES", "2000"))  # Startup timeout bachane ke liye optimized
 TRADE_HOURS_UTC = list(range(7, 17))   # London + NY overlap
 
 # ---- Signal timing ---------------------------------------------------------
@@ -49,3 +49,6 @@ SPREAD_MULT = float(os.getenv("SPREAD_MULT", "2.5"))    # abhi ka spread <= 2.5 
 KILL_SWITCH_MIN_TRADES = 100
 COOLDOWN_CANDLES = 2
 DB_PATH = os.getenv("DB_PATH", "signals.db")
+```[cite: 16]
+
+Isay save karne ke baad Render par service foran baghair kisi timeout ke boot ho kar live ho jayegi aur aap Telegram par aram se commands use kar sakenge!
