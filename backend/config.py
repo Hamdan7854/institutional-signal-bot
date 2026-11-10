@@ -49,6 +49,3 @@ SPREAD_MULT = float(os.getenv("SPREAD_MULT", "2.5"))    # abhi ka spread <= 2.5 
 KILL_SWITCH_MIN_TRADES = 100
 COOLDOWN_CANDLES = 2
 DB_PATH = os.getenv("DB_PATH", "signals.db")
-```[cite: 12]
-
-Aap isay apnay GitHub par **`backend/config.py`** mein update kar ke save karein. Ab Render par saare environment variables bilkul sahi tarah match ho jayenge aur deployment successful ho kar bot live ho jayega!
