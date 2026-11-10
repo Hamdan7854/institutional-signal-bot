@@ -59,7 +59,7 @@ def spread_ok(sp_now, sp_med):
 
 class SignalResult:
     def __init__(self, direction, confidence, target_time, entry):
-        self.direction = direction
+        self.direction = direction  # BUY or SELL
         self.confidence = confidence
         self.target_time = target_time
         self.entry = entry
@@ -78,7 +78,6 @@ class Strategy:
             self.last_reason = "insufficient_data"
             return {"trades": 0, "hit_rate": 0.0, "wilson_lb": 0.0, "breakeven": config.BREAKEVEN, "passed": False}
         df_ind = calculate_indicators(df.copy())
-        # Fallback to engine's standard training mechanism safely
         try:
             rep = self.engine.retrain(df_ind) if hasattr(self.engine, "retrain") else self.engine.train(df_ind)
         except Exception:
@@ -117,10 +116,10 @@ class Strategy:
         # --- REGIME 1: RANGING MARKET (Mean Reversion) [ADX < 20] ---
         if adx < 20:
             if close < bb_lower and rsi < 30 and close > open_p:
-                direction = "CALL"
+                direction = "BUY"
                 confidence = 0.82
             elif close > bb_upper and rsi > 70 and close < open_p:
-                direction = "PUT"
+                direction = "SELL"
                 confidence = 0.82
             else:
                 self.last_reason = "ranging_no_trigger"
@@ -129,10 +128,10 @@ class Strategy:
         # --- REGIME 2: TRENDING MARKET (Pullback) [ADX > 25] ---
         elif adx > 25:
             if ema_20 > ema_50 and close > ema_20:
-                direction = "CALL"
+                direction = "BUY"
                 confidence = 0.85
             elif ema_20 < ema_50 and close < ema_20:
-                direction = "PUT"
+                direction = "SELL"
                 confidence = 0.85
             else:
                 self.last_reason = "trending_no_pullback"
