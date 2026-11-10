@@ -3,7 +3,6 @@ from features.micp_features import build_features, build_labels, FEATURES
 import math
 import numpy as np
 import config
-from micp_features import build_features, build_labels, FEATURES
 
 _M15 = FEATURES.index("m15_trend")
 
