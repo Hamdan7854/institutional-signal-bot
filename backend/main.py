@@ -94,10 +94,11 @@ class Bot:
                     icon = "🟢" if sig.direction == "BUY" else "🔴"
                     
                     tg.send(f"📶 **{sym} {sig.direction}** {icon} | 1 min\n"
-                            f"• ENTRY: `{entry_t}` UTC\n"
+                            f"• ENTRY PRICE: `{sig.entry:.5f}`\n"
+                            f"• TIME: `{entry_t}` UTC\n"
                             f"• Confidence: `{sig.confidence:.1%}` | Spread: `{sp_now:.2f}` pips\n"
                             f"(Pehle DEMO par test karein.)")
-                    results.append(f"• `{sym}`: {icon} **SIGNAL ({sig.direction})**")
+                    results.append(f"• `{sym}`: {icon} **SIGNAL ({sig.direction}) @ {sig.entry:.5f}**")
                 else:
                     reason = getattr(b["st"], 'last_reason', 'No edge')
                     results.append(f"• `{sym}`: ⏳ No signal (`{reason}`)")
