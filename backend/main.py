@@ -42,7 +42,7 @@ class Bot:
     # ---------- Telegram commands ----------
     def cmd_status(self):
         up = (time.time() - self.started) / 3600
-        lines = [f"🤖 MICP Bot (Command-Driven) | uptime {up:.1f}h | manual_pause={self.manual_pause}",
+        lines = [f"🤖 MICP Bot (MTF Confirmed) | uptime {up:.1f}h | manual_pause={self.manual_pause}",
                  f"Signal expiry: 1 min | payout {config.PAYOUT:.0%} breakeven {config.BREAKEVEN:.2%}",
                  f"SPREAD_FILTER={config.SPREAD_FILTER} (max {config.MAX_SPREAD_PIPS} pips)"]
         for sym, b in self.books.items():
@@ -61,7 +61,7 @@ class Bot:
         return "\n".join(lines)
 
     def cmd_edge(self):
-        return "ℹ️ Command-driven mode active. /signal use karein live market scan ke liye."
+        return "ℹ️ Multi-Timeframe Command-driven mode active. /signal use karein market scan ke liye."
 
     def cmd_pause(self):
         self.manual_pause = True
@@ -74,7 +74,7 @@ class Bot:
     def cmd_signal(self):
         if self.manual_pause:
             return "⏸ Bot paused hai. Pehle /resume karein."
-        results = ["🔍 Manual Scan Results (ADX / Regime Strategy):"]
+        results = ["🔍 Manual Scan Results (M1 + M15 MTF Strategy):"]
         found = 0
         for sym, b in self.books.items():
             try:
@@ -84,16 +84,16 @@ class Bot:
                     results.append(f"• `{sym}`: Data nahi mila")
                     continue
                 
-                sig = b["st"].on_candle(df, sp_now, sp_med)
+                # Pass Oanda client to enable M15 multi-timeframe fetching
+                sig = b["st"].on_candle(df, sp_now, sp_med, client=self.client)
                 if sig:
                     found += 1
                     self.db.add_signal(sym, sig.direction, sig.confidence, sig.target_time, sig.entry)
                     entry_t = pd.Timestamp(sig.target_time).strftime("%H:%M:00")
                     
-                    # Formatting: BUY -> Green Circle (🟢), SELL -> Red Circle (🔴)
                     icon = "🟢" if sig.direction == "BUY" else "🔴"
                     
-                    tg.send(f"📶 **{sym} {sig.direction}** {icon} | 1 min\n"
+                    tg.send(f"📶 **{sym} {sig.direction}** {icon} | MTF Confirmed\n"
                             f"• ENTRY PRICE: `{sig.entry:.5f}`\n"
                             f"• TIME: `{entry_t}` UTC\n"
                             f"• Confidence: `{sig.confidence:.1%}` | Spread: `{sp_now:.2f}` pips\n"
@@ -106,11 +106,11 @@ class Bot:
                 results.append(f"• `{sym}`: Error (`{e}`)")
         
         if found == 0:
-            results.append("\n❌ Filhal kisi bhi pair par setup nahi mila. Thori der baad dobara try karein.")
+            results.append("\n❌ Filhal M1+M15 confluence par koi setup nahi mila. Thori der baad try karein.")
         return "\n".join(results)
 
     def cmd_help(self):
-        return ("/signal - abhi saare pairs scan kar ke signal check karein\n"
+        return ("/signal - M1 + M15 confluence ke sath saare pairs scan karein\n"
                 "/status - bot ki halat aur stats\n"
                 "/pause - signals band\n"
                 "/resume - signals shuru")
@@ -128,7 +128,7 @@ class Bot:
 
     def run_forever(self):
         tg.start_listener(self.handlers())
-        tg.send(f"✅ Bot Command-Mode par live hai! Jab signal chahiye ho, Telegram par **`/signal`** command bhejein.")
+        tg.send(f"✅ Bot Multi-Timeframe (M1+M15) Mode par live hai! Signal ke liye **`/signal`** bhejein.")
         while True:
             time.sleep(3600)
 
