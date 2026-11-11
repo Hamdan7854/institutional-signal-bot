@@ -111,16 +111,20 @@ class Strategy:
         bb_lower = latest.get('bb_lower', close * 0.99)
 
         direction = None
-        confidence = 0.80
 
         # --- REGIME 1: RANGING MARKET (Mean Reversion) [ADX < 20] ---
         if adx < 20:
             if close < bb_lower and rsi < 30 and close > open_p:
                 direction = "BUY"
-                confidence = 0.82
+                # Live dynamic confidence calculation based on RSI extremity and ADX weakness
+                rsi_strength = (30 - rsi) / 30  # 0 to 1 scale as RSI drops below 30
+                adx_strength = (20 - adx) / 20  # 0 to 1 scale as ADX drops below 20
+                confidence = float(np.clip(0.75 + (rsi_strength * 0.12) + (adx_strength * 0.08), 0.75, 0.96))
             elif close > bb_upper and rsi > 70 and close < open_p:
                 direction = "SELL"
-                confidence = 0.82
+                rsi_strength = (rsi - 70) / 30  # 0 to 1 scale as RSI rises above 70
+                adx_strength = (20 - adx) / 20
+                confidence = float(np.clip(0.75 + (rsi_strength * 0.12) + (adx_strength * 0.08), 0.75, 0.96))
             else:
                 self.last_reason = "ranging_no_trigger"
                 return None
@@ -129,10 +133,13 @@ class Strategy:
         elif adx > 25:
             if ema_20 > ema_50 and close > ema_20:
                 direction = "BUY"
-                confidence = 0.85
+                # Live dynamic confidence calculation based on ADX trend strength
+                trend_strength = min((adx - 25) / 25, 1.0)  # scales up as ADX increases above 25
+                confidence = float(np.clip(0.78 + (trend_strength * 0.18), 0.78, 0.96))
             elif ema_20 < ema_50 and close < ema_20:
                 direction = "SELL"
-                confidence = 0.85
+                trend_strength = min((adx - 25) / 25, 1.0)
+                confidence = float(np.clip(0.78 + (trend_strength * 0.18), 0.78, 0.96))
             else:
                 self.last_reason = "trending_no_pullback"
                 return None
@@ -143,7 +150,7 @@ class Strategy:
         if direction:
             self.last_signal_time = time.time()
             target_time = latest['time'] + pd.Timedelta(minutes=1)
-            entry = close
+            entry = float(close)
             return SignalResult(direction, confidence, target_time, entry)
 
         return None
