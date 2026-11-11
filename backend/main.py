@@ -89,13 +89,15 @@ class Bot:
                 if sig:
                     found += 1
                     self.db.add_signal(sym, sig.direction, sig.confidence, sig.target_time, sig.entry)
-                    entry_t = pd.Timestamp(sig.target_time).strftime("%H:%M:00")
+                    
+                    # Convert UTC target time to Pakistan Standard Time (PKT = UTC + 5 hours)
+                    entry_t = (pd.Timestamp(sig.target_time) + pd.Timedelta(hours=5)).strftime("%H:%M:00")
                     
                     icon = "🟢" if sig.direction == "BUY" else "🔴"
                     
                     tg.send(f"📶 **{sym} {sig.direction}** {icon} | MTF Confirmed\n"
                             f"• ENTRY PRICE: `{sig.entry:.5f}`\n"
-                            f"• TIME: `{entry_t}` UTC\n"
+                            f"• TIME: `{entry_t}` PKT\n"
                             f"• Confidence: `{sig.confidence:.1%}` | Spread: `{sp_now:.2f}` pips\n"
                             f"(Pehle DEMO par test karein.)")
                     results.append(f"• `{sym}`: {icon} **SIGNAL ({sig.direction}) @ {sig.entry:.5f}**")
@@ -128,7 +130,7 @@ class Bot:
 
     def run_forever(self):
         tg.start_listener(self.handlers())
-        tg.send(f"✅ Bot Multi-Timeframe (M1+M15) Mode par live hai! Signal ke liye **`/signal`** bhejein.")
+        tg.send(f"✅ Bot PKT Time Mode par live hai! Signal ke liye **`/signal`** bhejein.")
         while True:
             time.sleep(3600)
 
