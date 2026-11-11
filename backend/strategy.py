@@ -1,4 +1,4 @@
-"""Advanced Strategy with Market Regime Detection (ADX, RSI, Bollinger Bands, EMA Pullback & Mean Reversion)."""
+"""Advanced Strategy with Multi-Timeframe Regime Detection (M1 + M15 Confluence)."""
 import numpy as np
 import pandas as pd
 import config
@@ -58,11 +58,12 @@ def spread_ok(sp_now, sp_med):
     return True
 
 class SignalResult:
-    def __init__(self, direction, confidence, target_time, entry):
+    def __init__(self, direction, confidence, target_time, entry, mtf_trend):
         self.direction = direction  # BUY or SELL
         self.confidence = confidence
         self.target_time = target_time
         self.entry = entry
+        self.mtf_trend = mtf_trend
 
 class Strategy:
     def __init__(self, symbol, db):
@@ -84,7 +85,7 @@ class Strategy:
             rep = {"trades": 100, "hit_rate": 0.60, "wilson_lb": 0.55, "breakeven": config.BREAKEVEN, "passed": True}
         return rep
 
-    def on_candle(self, df, sp_now, sp_med):
+    def on_candle(self, df, sp_now, sp_med, client=None):
         import time
         if time.time() - self.last_signal_time < 600:
             self.last_reason = "cooldown_active"
@@ -97,6 +98,24 @@ class Strategy:
         if df is None or len(df) < 50:
             self.last_reason = "not_enough_data"
             return None
+
+        # --- MULTI-TIMEFRAME (M15) TREND CHECK ---
+        mtf_bias = "NEUTRAL"
+        try:
+            if client is not None:
+                # OANDA se M15 (15-minute) data fetch kar rahe hain trend filter ke liye
+                resp = client.get_candles(self.symbol, granularity="M15", count=60)
+                if resp and len(resp) >= 30:
+                    df_m15 = pd.DataFrame(resp)
+                    df_m15['close'] = df_m15['close'].astype(float)
+                    m15_ema20 = df_m15['close'].ewm(span=20, adjust=False).mean().iloc[-1]
+                    m15_ema50 = df_m15['close'].ewm(span=50, adjust=False).mean().iloc[-1]
+                    if m15_ema20 > m15_ema50:
+                        mtf_bias = "BUY"
+                    elif m15_ema20 < m15_ema50:
+                        mtf_bias = "SELL"
+        except Exception:
+            pass # Agar M15 fetch na ho sake toh fallback par single timeframe logic chale gi
 
         df_ind = calculate_indicators(df.copy())
         latest = df_ind.iloc[-1]
@@ -116,13 +135,12 @@ class Strategy:
         if adx < 20:
             if close < bb_lower and rsi < 30 and close > open_p:
                 direction = "BUY"
-                # Live dynamic confidence calculation based on RSI extremity and ADX weakness
-                rsi_strength = (30 - rsi) / 30  # 0 to 1 scale as RSI drops below 30
-                adx_strength = (20 - adx) / 20  # 0 to 1 scale as ADX drops below 20
+                rsi_strength = (30 - rsi) / 30
+                adx_strength = (20 - adx) / 20
                 confidence = float(np.clip(0.75 + (rsi_strength * 0.12) + (adx_strength * 0.08), 0.75, 0.96))
             elif close > bb_upper and rsi > 70 and close < open_p:
                 direction = "SELL"
-                rsi_strength = (rsi - 70) / 30  # 0 to 1 scale as RSI rises above 70
+                rsi_strength = (rsi - 70) / 30
                 adx_strength = (20 - adx) / 20
                 confidence = float(np.clip(0.75 + (rsi_strength * 0.12) + (adx_strength * 0.08), 0.75, 0.96))
             else:
@@ -133,8 +151,7 @@ class Strategy:
         elif adx > 25:
             if ema_20 > ema_50 and close > ema_20:
                 direction = "BUY"
-                # Live dynamic confidence calculation based on ADX trend strength
-                trend_strength = min((adx - 25) / 25, 1.0)  # scales up as ADX increases above 25
+                trend_strength = min((adx - 25) / 25, 1.0)
                 confidence = float(np.clip(0.78 + (trend_strength * 0.18), 0.78, 0.96))
             elif ema_20 < ema_50 and close < ema_20:
                 direction = "SELL"
@@ -147,10 +164,15 @@ class Strategy:
             self.last_reason = "neutral_adx_zone"
             return None
 
+        # --- MTF FILTER CONFLUENCE CHECK ---
+        if mtf_bias != "NEUTRAL" and direction != mtf_bias:
+            self.last_reason = f"mtf_conflict(m15_{mtf_bias})"
+            return None
+
         if direction:
             self.last_signal_time = time.time()
             target_time = latest['time'] + pd.Timedelta(minutes=1)
             entry = float(close)
-            return SignalResult(direction, confidence, target_time, entry)
+            return SignalResult(direction, confidence, target_time, entry, mtf_bias)
 
         return None
