@@ -1,4 +1,4 @@
-"""Advanced Strategy with Multi-Timeframe Regime Detection (M1 + M15 Confluence)."""
+"""Advanced Strategy with Multi-Timeframe Regime Detection (M1 + M15 Confluence) + Liquidity Sweep & Order Block Zones."""
 import numpy as np
 import pandas as pd
 import config
@@ -45,6 +45,37 @@ def calculate_indicators(df):
     df['adx'] = dx.rolling(window=14).mean()
     
     return df
+
+def detect_order_blocks_and_sweeps(df):
+    """
+    Detects Liquidity Sweeps (Wick Rejections) and Order Block zones 
+    based on recent swing highs and lows.
+    """
+    if len(df) < 20:
+        return False, False, 0.0, 0.0
+
+    latest = df.iloc[-1]
+    prev = df.iloc[-2]
+    
+    body = abs(latest['close'] - latest['open'])
+    total_range = latest['high'] - latest['low'] + 1e-9
+    
+    upper_wick = latest['high'] - max(latest['close'], latest['open'])
+    lower_wick = min(latest['close'], latest['open']) - latest['low']
+    
+    # Liquidity Sweep / Wick Rejection Logic: Wick is significantly larger than the body
+    is_bullish_sweep = (lower_wick > body * 1.5) and (latest['close'] > latest['open'])
+    is_bearish_sweep = (upper_wick > body * 1.5) and (latest['close'] < latest['open'])
+    
+    # Order Block / Swing Zones (Support & Resistance from last 20 candles)
+    recent_high = df['high'].iloc[-20:-1].max()
+    recent_low = df['low'].iloc[-20:-1].min()
+    
+    # Check if price recently swept liquidity around swing levels
+    near_support_sweep = latest['low'] <= recent_low * 1.001 and is_bullish_sweep
+    near_resistance_sweep = latest['high'] >= recent_high * 0.999 and is_bearish_sweep
+    
+    return near_support_sweep, near_resistance_sweep, recent_high, recent_low
 
 def spread_ok(sp_now, sp_med):
     if sp_now is None or sp_med is None:
@@ -103,7 +134,6 @@ class Strategy:
         mtf_bias = "NEUTRAL"
         try:
             if client is not None:
-                # OANDA se M15 (15-minute) data fetch kar rahe hain trend filter ke liye
                 resp = client.get_candles(self.symbol, granularity="M15", count=60)
                 if resp and len(resp) >= 30:
                     df_m15 = pd.DataFrame(resp)
@@ -115,9 +145,13 @@ class Strategy:
                     elif m15_ema20 < m15_ema50:
                         mtf_bias = "SELL"
         except Exception:
-            pass # Agar M15 fetch na ho sake toh fallback par single timeframe logic chale gi
+            pass
 
         df_ind = calculate_indicators(df.copy())
+        
+        # --- ORDER BLOCK & LIQUIDITY SWEEP CHECK ---
+        bull_sweep, bear_sweep, s_high, s_low = detect_order_blocks_and_sweeps(df_ind)
+
         latest = df_ind.iloc[-1]
         open_p = latest['open']
         close = latest['close']
@@ -133,32 +167,32 @@ class Strategy:
 
         # --- REGIME 1: RANGING MARKET (Mean Reversion) [ADX < 20] ---
         if adx < 20:
-            if close < bb_lower and rsi < 30 and close > open_p:
+            if close < bb_lower and rsi < 30 and close > open_p and bull_sweep:
                 direction = "BUY"
                 rsi_strength = (30 - rsi) / 30
                 adx_strength = (20 - adx) / 20
-                confidence = float(np.clip(0.75 + (rsi_strength * 0.12) + (adx_strength * 0.08), 0.75, 0.96))
-            elif close > bb_upper and rsi > 70 and close < open_p:
+                confidence = float(np.clip(0.80 + (rsi_strength * 0.12) + (adx_strength * 0.08), 0.80, 0.96))
+            elif close > bb_upper and rsi > 70 and close < open_p and bear_sweep:
                 direction = "SELL"
                 rsi_strength = (rsi - 70) / 30
                 adx_strength = (20 - adx) / 20
-                confidence = float(np.clip(0.75 + (rsi_strength * 0.12) + (adx_strength * 0.08), 0.75, 0.96))
+                confidence = float(np.clip(0.80 + (rsi_strength * 0.12) + (adx_strength * 0.08), 0.80, 0.96))
             else:
-                self.last_reason = "ranging_no_trigger"
+                self.last_reason = "ranging_no_sweep_trigger"
                 return None
 
         # --- REGIME 2: TRENDING MARKET (Pullback) [ADX > 25] ---
         elif adx > 25:
-            if ema_20 > ema_50 and close > ema_20:
+            if ema_20 > ema_50 and close > ema_20 and bull_sweep:
                 direction = "BUY"
                 trend_strength = min((adx - 25) / 25, 1.0)
-                confidence = float(np.clip(0.78 + (trend_strength * 0.18), 0.78, 0.96))
-            elif ema_20 < ema_50 and close < ema_20:
+                confidence = float(np.clip(0.82 + (trend_strength * 0.14), 0.82, 0.96))
+            elif ema_20 < ema_50 and close < ema_20 and bear_sweep:
                 direction = "SELL"
                 trend_strength = min((adx - 25) / 25, 1.0)
-                confidence = float(np.clip(0.78 + (trend_strength * 0.18), 0.78, 0.96))
+                confidence = float(np.clip(0.82 + (trend_strength * 0.14), 0.82, 0.96))
             else:
-                self.last_reason = "trending_no_pullback"
+                self.last_reason = "trending_no_sweep_pullback"
                 return None
         else:
             self.last_reason = "neutral_adx_zone"
