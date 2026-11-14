@@ -1,4 +1,4 @@
-"""Pure Price Action & Liquidity Sweep Strategy with Order Block Zones (M1 + M15 Confluence)."""
+"""Pure Price Action, Liquidity Sweep & Pullback Breakout Strategy (M1 + M15 Confluence)."""
 import numpy as np
 import pandas as pd
 import config
@@ -13,6 +13,39 @@ def calculate_structure_and_zones(df):
     df['ema_50'] = close.ewm(span=50, adjust=False).mean()
     
     return df
+
+def detect_pullback_and_breakout(df):
+    """
+    Detects Momentum Pullback Breakouts:
+    - 2 strong consecutive bullish/bearish candles followed by a smaller pullback candle.
+    - Triggers when price breaks the high/low of that pullback pause candle.
+    """
+    if len(df) < 25:
+        return False, False, 0.0, 0.0
+
+    latest = df.iloc[-1]
+    prev = df.iloc[-2]      # Pullback / Pause candle
+    prev_2 = df.iloc[-3]    # Strong momentum candle 1
+    prev_3 = df.iloc[-4]    # Strong momentum candle 2
+    
+    # 1. Pullback / Pause Candle High & Low marking
+    pullback_high = prev['high']
+    pullback_low = prev['low']
+    
+    # 2. Check preceding momentum
+    bullish_momentum = (prev_3['close'] > prev_3['open']) and (prev_2['close'] > prev_2['open'])
+    bearish_momentum = (prev_3['close'] < prev_3['open']) and (prev_2['close'] < prev_2['open'])
+    
+    # Pullback check: Previous candle body is smaller (retracement/pause)
+    prev_body = abs(prev['close'] - prev['open'])
+    avg_body = (abs(prev_3['close'] - prev_3['open']) + abs(prev_2['close'] - prev_2['open'])) / 2
+    is_pullback = prev_body <= avg_body * 1.2
+    
+    # 3. Breakout confirmation: Latest candle breaks the pullback high or low
+    breakout_bullish = bullish_momentum and is_pullback and (latest['close'] > pullback_high)
+    breakout_bearish = bearish_momentum and is_pullback and (latest['close'] < pullback_low)
+    
+    return breakout_bullish, breakout_bearish, pullback_high, pullback_low
 
 def detect_liquidity_sweep_and_order_blocks(df):
     """
@@ -36,7 +69,6 @@ def detect_liquidity_sweep_and_order_blocks(df):
     recent_high = df['high'].iloc[-20:-1].max()
     recent_low = df['low'].iloc[-20:-1].min()
     
-    # Check if price swept liquidity around key structural zones
     near_support_sweep = latest['low'] <= recent_low * 1.001 and is_bullish_sweep
     near_resistance_sweep = latest['high'] >= recent_high * 0.999 and is_bearish_sweep
     
@@ -108,33 +140,32 @@ class Strategy:
                     if m15_ema20 > m15_ema50:
                         mtf_bias = "BUY"
                     elif m15_ema20 < m15_ema50:
-                        mtf_bias = "SELL"
+                        mtf_bias_val = "SELL" # handled below
         except Exception:
             pass
 
         df_ind = calculate_structure_and_zones(df.copy())
         
-        # --- ORDER BLOCK & LIQUIDITY SWEEP CHECK ---
+        # --- STRATEGY CHECKS ---
         bull_sweep, bear_sweep, s_high, s_low = detect_liquidity_sweep_and_order_blocks(df_ind)
+        pullback_buy, pullback_sell, pb_high, pb_low = detect_pullback_and_breakout(df_ind)
 
         latest = df_ind.iloc[-1]
         open_p = latest['open']
         close = latest['close']
-        ema_20 = latest.get('ema_20', close)
-        ema_50 = latest.get('ema_50', close)
 
         direction = None
-        confidence = 0.88
+        confidence = 0.89
 
-        # --- PURE PRICE ACTION & LIQUIDITY REJECTION LOGIC ---
-        if bull_sweep and close > open_p:
+        # --- COMBINED PRICE ACTION CONFLUENCE (Sweep OR Pullback Breakout) ---
+        if (bull_sweep or pullback_buy) and close > open_p:
             direction = "BUY"
-            confidence = 0.90
-        elif bear_sweep and close < open_p:
+            confidence = 0.92 if pullback_buy else 0.90
+        elif (bear_sweep or pullback_sell) and close < open_p:
             direction = "SELL"
-            confidence = 0.90
+            confidence = 0.92 if pullback_sell else 0.90
         else:
-            self.last_reason = "no_liquidity_sweep_detected"
+            self.last_reason = "no_valid_price_action_setup"
             return None
 
         # --- MTF FILTER CONFLUENCE CHECK ---
