@@ -56,22 +56,23 @@ def start_listener(handlers):
                     h = handlers.get(cmd)
                     if h:
                         # Agar command `/signal` hai, toh usay background thread mein run karein
-                        # taake 15 second wait karne ke doran bot ki polling block na ho.
                         if cmd == "/signal":
                             def delayed_signal():
-                                # 1. Pehle user ko bata dein ke command mil gayi hai aur wait ho raha hai
-                                send("⏳ Signal command received. Waiting for the last 15 seconds of the current candle...")
+                                send("⏳ Signal command received. Waiting until the 40th second of the current candle...")
                                 
-                                # 2. Current M1 candle ke baqi seconds calculate karna (0 to 59 seconds loop)
+                                # Current minute ke kitne seconds guzar chuke hain
                                 now_sec = time.time() % 60
-                                rem_sec = 60 - now_sec
                                 
-                                # Agar 15 seconds se zyada baqi hain, toh exact aakhri 15 seconds tak wait karein
-                                if rem_sec > 15:
-                                    sleep_time = rem_sec - 15
+                                # Agar abhi 40 seconds nahi aaye, toh 40th second tak wait karein
+                                if now_sec < 40:
+                                    sleep_time = 40 - now_sec
+                                    time.sleep(sleep_time)
+                                elif now_sec > 40:
+                                    # Agar 40 seconds cross ho chuke hain, toh agli candle ke 40th second ka wait karein
+                                    sleep_time = (60 - now_sec) + 40
                                     time.sleep(sleep_time)
                                 
-                                # 3. Aakhri 15 seconds aate hi handler (signal generation) call hoga
+                                # Jaise hi 40th second aaye, handler (strategy calculation) call hoga
                                 res = h()
                                 if res:
                                     send(res)
