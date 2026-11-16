@@ -1,4 +1,4 @@
-"""Telegram: message bhejna + commands sunna (/status, /edge, /pause, /resume, /help). Sirf TELEGRAM_BOT_CHAT_ID wali chat ki commands manzoor hoti hain."""
+"""Telegram: message bhejna + commands sunna (/status, /edge, /pause, /resume, /help, /signal). Sirf TELEGRAM_BOT_CHAT_ID wali chat ki commands manzoor hoti hain."""
 import threading
 import time
 import requests
@@ -28,7 +28,7 @@ def send(text: str):
 
 
 def start_listener(handlers):
-    """handlers: {'/status': callable -> str, ...}. Background daemon thread mein long-polling."""
+    """handlers: {'/status': callable -> str, '/signal': callable -> str, ...}. Background daemon thread mein long-polling."""
     token = _get_token()
     chat_id = _get_chat_id()
     if not (token and chat_id):
@@ -55,7 +55,32 @@ def start_listener(handlers):
                     cmd = text.split()[0].split("@")[0].lower()
                     h = handlers.get(cmd)
                     if h:
-                        send(h())
+                        # Agar command `/signal` hai, toh usay background thread mein run karein
+                        # taake 15 second wait karne ke doran bot ki polling block na ho.
+                        if cmd == "/signal":
+                            def delayed_signal():
+                                # 1. Pehle user ko bata dein ke command mil gayi hai aur wait ho raha hai
+                                send("⏳ Signal command received. Waiting for the last 15 seconds of the current candle...")
+                                
+                                # 2. Current M1 candle ke baqi seconds calculate karna (0 to 59 seconds loop)
+                                now_sec = time.time() % 60
+                                rem_sec = 60 - now_sec
+                                
+                                # Agar 15 seconds se zyada baqi hain, toh exact aakhri 15 seconds tak wait karein
+                                if rem_sec > 15:
+                                    sleep_time = rem_sec - 15
+                                    time.sleep(sleep_time)
+                                
+                                # 3. Aakhri 15 seconds aate hi handler (signal generation) call hoga
+                                res = h()
+                                if res:
+                                    send(res)
+
+                            threading.Thread(target=delayed_signal, daemon=True).start()
+                        else:
+                            res = h()
+                            if res:
+                                send(res)
             except Exception as e:
                 print("telegram listener error:", e)
                 time.sleep(5)
