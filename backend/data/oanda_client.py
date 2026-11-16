@@ -1,4 +1,4 @@
-"""OANDA v20 REST client (sirf requests, koi extra library nahi)."""
+"""OANDA v20 REST client with Auto-Environment Detection & Crash Protection."""
 import time
 import requests
 import config
@@ -8,17 +8,34 @@ HOSTS = {
     "live": "https://api-fxtrade.oanda.com",
 }
 
-
 class OandaClient:
     def __init__(self, token=None, env=None):
-        self.token = token or getattr(config, "OANDA_API_KEY", None) or getattr(config, "OANDA_TOKEN", None)
-        env_val = env or getattr(config, "OANDA_ENVIRONMENT", None) or getattr(config, "OANDA_ENV", "practice")
-        self.base = HOSTS.get(env_val, HOSTS["practice"])
-        
+        self.token = (token or getattr(config, "OANDA_API_KEY", "") or "").strip()
         if not self.token:
-            raise RuntimeError("OANDA_API_KEY set nahi hai (environment variable).")
+            raise RuntimeError("OANDA_API_KEY set nahi hai!")
+
         self.s = requests.Session()
         self.s.headers.update({"Authorization": f"Bearer {self.token}"})
+
+        # Auto-detect whether token belongs to Practice or Live server
+        env_val = (env or getattr(config, "OANDA_ENVIRONMENT", "practice") or "practice").strip().lower()
+        self.base = self._resolve_working_host(env_val)
+
+    def _resolve_working_host(self, preferred_env):
+        order = [preferred_env, "live" if preferred_env == "practice" else "practice"]
+        for mode in order:
+            host = HOSTS.get(mode)
+            if not host:
+                continue
+            try:
+                r = self.s.get(f"{host}/v3/accounts", timeout=10)
+                if r.status_code == 200:
+                    print(f"[OANDA] Connected successfully using '{mode}' environment.")
+                    return host
+            except Exception:
+                pass
+        print("[OANDA WARNING] Token rejected by both Practice & Live servers (401). Check API Key!")
+        return HOSTS.get(preferred_env, HOSTS["practice"])
 
     def _get(self, path, params=None, retries=3):
         for i in range(retries):
@@ -26,23 +43,25 @@ class OandaClient:
                 r = self.s.get(self.base + path, params=params, timeout=15)
                 if r.status_code == 200:
                     return r.json()
+                if r.status_code == 401:
+                    raise RuntimeError(f"OANDA 401 Unauthorized: Token invalid ya expire ho chuka hai.")
                 if r.status_code in (429, 500, 502, 503, 504):
                     time.sleep(1.5 * (i + 1))
                     continue
                 raise RuntimeError(f"OANDA {r.status_code}: {r.text[:200]}")
+            except RuntimeError:
+                raise
             except requests.RequestException:
                 time.sleep(1.5 * (i + 1))
         raise RuntimeError("OANDA request baar baar fail hui")
 
-    def candles(self, instrument, granularity="M1", count=500, to_time=None, price="MBA"):
-        """price: M=mid, MBA=mid+bid+ask (spread ke liye)."""
+    def candles(self, instrument, granularity="M1", count=500, to_time=None, price="M"):
         params = {"granularity": granularity, "price": price, "count": count}
         if to_time:
             params["to"] = to_time
         return self._get(f"/v3/instruments/{instrument}/candles", params).get("candles", [])
 
     def history(self, instrument, n=30000, granularity="M1", price="MBA"):
-        """Peeche ki taraf paginate kar ke n complete candles (max 5000 per call)."""
         out, to_time = [], None
         while len(out) < n:
             batch = self.candles(instrument, granularity, min(5000, n - len(out) + 1), to_time, price)
