@@ -50,9 +50,9 @@ def detect_pullback_and_breakout(df):
 def detect_liquidity_sweep_and_order_blocks(df):
     """
     Detects Liquidity Sweeps (Wick Rejections) and Order Block zones 
-    based on recent swing highs and lows for pure price action execution.
+    based on the last 10 candles for fast M1 price action execution.
     """
-    if len(df) < 20:
+    if len(df) < 15:
         return False, False, 0.0, 0.0
 
     latest = df.iloc[-1]
@@ -65,9 +65,9 @@ def detect_liquidity_sweep_and_order_blocks(df):
     is_bullish_sweep = (lower_wick > body * 1.5) and (latest['close'] > latest['open'])
     is_bearish_sweep = (upper_wick > body * 1.5) and (latest['close'] < latest['open'])
     
-    # Order Block / Key Swing Zones (Support & Resistance from last 20 candles)
-    recent_high = df['high'].iloc[-20:-1].max()
-    recent_low = df['low'].iloc[-20:-1].min()
+    # Order Block / Key Swing Zones updated to last 10 candles
+    recent_high = df['high'].iloc[-10:-1].max()
+    recent_low = df['low'].iloc[-10:-1].min()
     
     near_support_sweep = latest['low'] <= recent_low * 1.001 and is_bullish_sweep
     near_resistance_sweep = latest['high'] >= recent_high * 0.999 and is_bearish_sweep
@@ -140,7 +140,7 @@ class Strategy:
                     if m15_ema20 > m15_ema50:
                         mtf_bias = "BUY"
                     elif m15_ema20 < m15_ema50:
-                        mtf_bias_val = "SELL" # handled below
+                        mtf_bias = "SELL"
         except Exception:
             pass
 
