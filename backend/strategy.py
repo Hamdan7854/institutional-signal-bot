@@ -1,4 +1,4 @@
-"""Multi-Strategy Engine: Donchian+AO/AC, PSAR+MA Crossover, and BB+SuperTrend."""
+"""Multi-Strategy Engine: Donchian+AO/AC (Fresh Breakout), PSAR+MA Crossover, and BB+SuperTrend."""
 import time
 import numpy as np
 import pandas as pd
@@ -92,21 +92,21 @@ def calculate_all_indicators(df):
     return df
 
 
-# --- STRATEGY 1: Donchian Channel + AO & AC Breakout ---
+# --- STRATEGY 1: Donchian Channel + AO & AC (FRESH Breakout Only) ---
 def check_donchian_ao_ac(df):
     latest = df.iloc[-1]
     prev = df.iloc[-2]
-    if pd.isna(latest['dc_upper']) or pd.isna(latest['ac']):
+    if pd.isna(latest['dc_upper']) or pd.isna(latest['ac']) or pd.isna(prev['dc_upper']):
         return None, 0.0
 
-    # Bullish Breakout
-    if (latest['close'] > latest['dc_upper'] or latest['high'] >= latest['dc_upper']) and \
-       latest['close'] > latest['open'] and latest['ao'] > 0 and latest['ac'] > prev['ac']:
+    # Bullish FRESH Breakout: Previous candle was INSIDE channel, current candle breaks OUT
+    fresh_bull_break = (prev['close'] <= prev['dc_upper']) and (latest['close'] > latest['dc_upper'])
+    if fresh_bull_break and latest['close'] > latest['open'] and latest['ao'] > 0 and latest['ac'] > prev['ac']:
         return "BUY", 0.91
 
-    # Bearish Breakout
-    if (latest['close'] < latest['dc_lower'] or latest['low'] <= latest['dc_lower']) and \
-       latest['close'] < latest['open'] and latest['ao'] < 0 and latest['ac'] < prev['ac']:
+    # Bearish FRESH Breakout: Previous candle was INSIDE channel, current candle breaks OUT
+    fresh_bear_break = (prev['close'] >= prev['dc_lower']) and (latest['close'] < latest['dc_lower'])
+    if fresh_bear_break and latest['close'] < latest['open'] and latest['ao'] < 0 and latest['ac'] < prev['ac']:
         return "SELL", 0.91
 
     return None, 0.0
