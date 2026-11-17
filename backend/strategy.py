@@ -1,4 +1,10 @@
-"""Multi-Strategy Engine: Donchian+AO/AC (Fresh Breakout), PSAR+MA Crossover, and BB+SuperTrend."""
+"""5-Strategy Multi-Engine:
+1. Donchian + AO/AC (Fresh Breakout)
+2. Parabolic SAR + MA Crossover (Trend Continuation)
+3. Bollinger Bands + SuperTrend (Trend Flip)
+4. Keltner Channel + Stochastic (Band Reversal)
+5. Trap Candle / Liquidity Sweep (Fakeout Reversal)
+"""
 import time
 import numpy as np
 import pandas as pd
@@ -7,7 +13,7 @@ from prediction.micp_engine import MICPEngine
 
 
 def calculate_all_indicators(df):
-    """Calculates indicators for all 3 strategies."""
+    """Calculates indicators for all 5 strategies."""
     close = df['close']
     high = df['high']
     low = df['low']
@@ -33,15 +39,28 @@ def calculate_all_indicators(df):
     df['bb_upper'] = bb_mid + (2.0 * bb_std)
     df['bb_lower'] = bb_mid - (2.0 * bb_std)
 
-    # 5. Fast SuperTrend (ATR 7, Mult 1.5 - responsive like 1,1)
+    # 5. ATR (10) & Keltner Channel (EMA 20 + 1.5*ATR)
     tr1 = high - low
     tr2 = (high - close.shift(1)).abs()
     tr3 = (low - close.shift(1)).abs()
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    atr = tr.rolling(window=7).mean()
+    atr10 = tr.rolling(window=10).mean()
     
-    upper_band = hl2 + (1.5 * atr)
-    lower_band = hl2 - (1.5 * atr)
+    df['kc_mid'] = df['ema_slow']
+    df['kc_upper'] = df['kc_mid'] + (1.5 * atr10)
+    df['kc_lower'] = df['kc_mid'] - (1.5 * atr10)
+
+    # 6. Stochastic Oscillator (14, 3, 3)
+    low14 = low.rolling(window=14).min()
+    high14 = high.rolling(window=14).max()
+    k_raw = 100.0 * ((close - low14) / (high14 - low14).replace(0, np.nan))
+    df['stoch_k'] = k_raw.rolling(window=3).mean()
+    df['stoch_d'] = df['stoch_k'].rolling(window=3).mean()
+
+    # 7. Fast SuperTrend (ATR 7, Mult 1.5)
+    atr7 = tr.rolling(window=7).mean()
+    upper_band = hl2 + (1.5 * atr7)
+    lower_band = hl2 - (1.5 * atr7)
     
     st_dir = np.ones(len(df))
     for i in range(1, len(df)):
@@ -53,12 +72,11 @@ def calculate_all_indicators(df):
             st_dir[i] = st_dir[i - 1]
     df['supertrend_dir'] = st_dir
 
-    # 6. Parabolic SAR (Simplified vectorized directional step)
+    # 8. Parabolic SAR
     psar = close.copy()
     bull = True
     af = 0.02
     max_af = 0.2
-    ep = low.iloc[0]
     hp = high.iloc[0]
     lp = low.iloc[0]
     psar_dir = np.ones(len(df))
@@ -99,12 +117,10 @@ def check_donchian_ao_ac(df):
     if pd.isna(latest['dc_upper']) or pd.isna(latest['ac']) or pd.isna(prev['dc_upper']):
         return None, 0.0
 
-    # Bullish FRESH Breakout: Previous candle was INSIDE channel, current candle breaks OUT
     fresh_bull_break = (prev['close'] <= prev['dc_upper']) and (latest['close'] > latest['dc_upper'])
     if fresh_bull_break and latest['close'] > latest['open'] and latest['ao'] > 0 and latest['ac'] > prev['ac']:
         return "BUY", 0.91
 
-    # Bearish FRESH Breakout: Previous candle was INSIDE channel, current candle breaks OUT
     fresh_bear_break = (prev['close'] >= prev['dc_lower']) and (latest['close'] < latest['dc_lower'])
     if fresh_bear_break and latest['close'] < latest['open'] and latest['ao'] < 0 and latest['ac'] < prev['ac']:
         return "SELL", 0.91
@@ -117,14 +133,11 @@ def check_psar_ma_crossover(df):
     latest = df.iloc[-1]
     prev = df.iloc[-2]
 
-    # Bullish: PSAR below price (1) + Fast MA > Slow MA + Bullish candle
     if latest['psar_dir'] == 1 and latest['ema_fast'] > latest['ema_slow'] and \
        latest['close'] > latest['open'] and latest['close'] > latest['ema_fast']:
-        # Bonus confidence if fresh crossover
         conf = 0.93 if prev['ema_fast'] <= prev['ema_slow'] else 0.89
         return "BUY", conf
 
-    # Bearish: PSAR above price (-1) + Fast MA < Slow MA + Bearish candle
     if latest['psar_dir'] == -1 and latest['ema_fast'] < latest['ema_slow'] and \
        latest['close'] < latest['open'] and latest['close'] < latest['ema_fast']:
         conf = 0.93 if prev['ema_fast'] >= prev['ema_slow'] else 0.89
@@ -140,15 +153,64 @@ def check_bb_supertrend(df):
     if pd.isna(latest['bb_upper']):
         return None, 0.0
 
-    # Bullish: Touched/near lower BB recently + SuperTrend flipped to BUY (1)
     touched_lower = (latest['low'] <= latest['bb_lower']) or (prev['low'] <= prev['bb_lower'])
     if touched_lower and latest['supertrend_dir'] == 1 and latest['close'] > latest['open']:
         return "BUY", 0.90
 
-    # Bearish: Touched/near upper BB recently + SuperTrend flipped to SELL (-1)
     touched_upper = (latest['high'] >= latest['bb_upper']) or (prev['high'] >= prev['bb_upper'])
     if touched_upper and latest['supertrend_dir'] == -1 and latest['close'] < latest['open']:
         return "SELL", 0.90
+
+    return None, 0.0
+
+
+# --- STRATEGY 4: Keltner Channel + Stochastic (14,3,3) Reversal ---
+def check_keltner_stochastic(df):
+    latest = df.iloc[-1]
+    prev = df.iloc[-2]
+    if pd.isna(latest['kc_upper']) or pd.isna(latest['stoch_k']) or pd.isna(latest['stoch_d']):
+        return None, 0.0
+
+    # Bullish Reversal: Touched lower Keltner band + Stoch oversold (<25) crossing UP + Green candle
+    touched_kc_low = (latest['low'] <= latest['kc_lower']) or (prev['low'] <= prev['kc_lower'])
+    stoch_bull_cross = (prev['stoch_k'] < 25.0) and (latest['stoch_k'] > latest['stoch_d'])
+    if touched_kc_low and stoch_bull_cross and latest['close'] > latest['open']:
+        return "BUY", 0.90
+
+    # Bearish Reversal: Touched upper Keltner band + Stoch overbought (>75) crossing DOWN + Red candle
+    touched_kc_high = (latest['high'] >= latest['kc_upper']) or (prev['high'] >= prev['kc_upper'])
+    stoch_bear_cross = (prev['stoch_k'] > 75.0) and (latest['stoch_k'] < latest['stoch_d'])
+    if touched_kc_high and stoch_bear_cross and latest['close'] < latest['open']:
+        return "SELL", 0.90
+
+    return None, 0.0
+
+
+# --- STRATEGY 5: Trap Candle (Liquidity Sweep / Fakeout Reversal) ---
+def check_trap_candle(df):
+    if len(df) < 15:
+        return None, 0.0
+
+    latest = df.iloc[-1]
+    prev = df.iloc[-2]
+    # Look at prior 10 candles (excluding latest and prev) for recent swing high/low
+    swing_window = df.iloc[-12:-2]
+    swing_high = swing_window['high'].max()
+    swing_low = swing_window['low'].min()
+
+    # Bullish Trap (Bear Trap): Prev candle swept below swing_low (wick or fake break)
+    # and latest candle is a strong bullish reversal closing back above swing_low
+    bear_trap_sweep = (prev['low'] < swing_low) or (latest['low'] < swing_low)
+    if bear_trap_sweep and (latest['close'] > swing_low) and (latest['close'] > latest['open']) and \
+       (latest['close'] > prev['open']):
+        return "BUY", 0.92
+
+    # Bearish Trap (Bull Trap): Prev candle swept above swing_high (wick or fake break)
+    # and latest candle is a strong bearish reversal closing back below swing_high
+    bull_trap_sweep = (prev['high'] > swing_high) or (latest['high'] > swing_high)
+    if bull_trap_sweep and (latest['close'] < swing_high) and (latest['close'] < latest['open']) and \
+       (latest['close'] < prev['open']):
+        return "SELL", 0.92
 
     return None, 0.0
 
@@ -169,7 +231,7 @@ class SignalResult:
         self.confidence = confidence
         self.target_time = target_time
         self.entry = entry
-        # mtf_trend is used to display the exact Strategy Name in Telegram alert
+        # mtf_trend displays the exact matched Strategy Name in Telegram
         self.mtf_trend = mtf_trend
 
 
@@ -208,7 +270,7 @@ class Strategy:
 
         df_ind = calculate_all_indicators(df.copy())
 
-        # Evaluate all 3 strategies independently and pick the highest confidence match
+        # Evaluate all 5 strategies independently and pick the highest confidence match
         candidates = []
 
         d1, c1 = check_donchian_ao_ac(df_ind)
@@ -222,6 +284,14 @@ class Strategy:
         d3, c3 = check_bb_supertrend(df_ind)
         if d3:
             candidates.append((d3, c3, "Strat-3: BB + SuperTrend Reversal"))
+
+        d4, c4 = check_keltner_stochastic(df_ind)
+        if d4:
+            candidates.append((d4, c4, "Strat-4: Keltner + Stochastic Reversal"))
+
+        d5, c5 = check_trap_candle(df_ind)
+        if d5:
+            candidates.append((d5, c5, "Strat-5: Trap Candle Liquidity Sweep"))
 
         if not candidates:
             self.last_reason = "no_strategy_matched"
