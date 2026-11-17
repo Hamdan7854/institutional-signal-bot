@@ -42,7 +42,7 @@ class Bot:
     # ---------- Telegram commands ----------
     def cmd_status(self):
         up = (time.time() - self.started) / 3600
-        lines = [f"🤖 MICP Bot (MTF Confirmed) | uptime {up:.1f}h | manual_pause={self.manual_pause}",
+        lines = [f"🤖 Multi-Strategy Bot | uptime {up:.1f}h | manual_pause={self.manual_pause}",
                  f"Signal expiry: 1 min | payout {config.PAYOUT:.0%} breakeven {config.BREAKEVEN:.2%}",
                  f"SPREAD_FILTER={config.SPREAD_FILTER} (max {config.MAX_SPREAD_PIPS} pips)"]
         for sym, b in self.books.items():
@@ -61,7 +61,7 @@ class Bot:
         return "\n".join(lines)
 
     def cmd_edge(self):
-        return "ℹ️ Multi-Timeframe Command-driven mode active. /signal use karein market scan ke liye."
+        return "ℹ️ Multi-Strategy Command-driven mode active. /signal use karein market scan ke liye."
 
     def cmd_pause(self):
         self.manual_pause = True
@@ -74,7 +74,7 @@ class Bot:
     def cmd_signal(self):
         if self.manual_pause:
             return "⏸ Bot paused hai. Pehle /resume karein."
-        results = ["🔍 Manual Scan Results (M1 + M15 MTF Strategy):"]
+        results = ["🔍 Manual Scan Results (Multi-Strategy Engine):"]
         found = 0
         for sym, b in self.books.items():
             try:
@@ -84,8 +84,8 @@ class Bot:
                     results.append(f"• `{sym}`: Data nahi mila")
                     continue
                 
-                # Pass Oanda client to enable M15 multi-timeframe fetching
-                sig = b["st"].on_candle(df, sp_now, sp_med, client=self.client)
+                # force_scan=True bypasses cooldown on manual /signal command
+                sig = b["st"].on_candle(df, sp_now, sp_med, client=self.client, force_scan=True)
                 if sig:
                     found += 1
                     self.db.add_signal(sym, sig.direction, sig.confidence, sig.target_time, sig.entry)
@@ -94,13 +94,15 @@ class Bot:
                     entry_t = (pd.Timestamp(sig.target_time) + pd.Timedelta(hours=5)).strftime("%H:%M:00")
                     
                     icon = "🟢" if sig.direction == "BUY" else "🔴"
+                    strat_name = getattr(sig, "mtf_trend", "Multi-Strategy")
                     
-                    tg.send(f"📶 **{sym} {sig.direction}** {icon} | MTF Confirmed\n"
+                    tg.send(f"📶 **{sym} {sig.direction}** {icon}\n"
+                            f"• STRATEGY: `{strat_name}`\n"
                             f"• ENTRY PRICE: `{sig.entry:.5f}`\n"
                             f"• TIME: `{entry_t}` PKT\n"
                             f"• Confidence: `{sig.confidence:.1%}` | Spread: `{sp_now:.2f}` pips\n"
                             f"(Pehle DEMO par test karein.)")
-                    results.append(f"• `{sym}`: {icon} **SIGNAL ({sig.direction}) @ {sig.entry:.5f}**")
+                    results.append(f"• `{sym}`: {icon} **SIGNAL ({sig.direction}) @ {sig.entry:.5f}** (`{strat_name}`)")
                 else:
                     reason = getattr(b["st"], 'last_reason', 'No edge')
                     results.append(f"• `{sym}`: ⏳ No signal (`{reason}`)")
@@ -108,11 +110,11 @@ class Bot:
                 results.append(f"• `{sym}`: Error (`{e}`)")
         
         if found == 0:
-            results.append("\n❌ Filhal M1+M15 confluence par koi setup nahi mila. Thori der baad try karein.")
+            results.append("\n❌ Filhal kisi strategy par setup nahi mila. Thori der baad try karein.")
         return "\n".join(results)
 
     def cmd_help(self):
-        return ("/signal - M1 + M15 confluence ke sath saare pairs scan karein\n"
+        return ("/signal - Saare pairs par 3 strategies scan karein\n"
                 "/status - bot ki halat aur stats\n"
                 "/pause - signals band\n"
                 "/resume - signals shuru")
@@ -130,7 +132,7 @@ class Bot:
 
     def run_forever(self):
         tg.start_listener(self.handlers())
-        tg.send(f"✅ Bot PKT Time Mode par live hai! Signal ke liye **`/signal`** bhejein.")
+        tg.send(f"✅ Multi-Strategy Bot PKT Time Mode par live hai! Signal ke liye **`/signal`** bhejein.")
         while True:
             time.sleep(3600)
 
