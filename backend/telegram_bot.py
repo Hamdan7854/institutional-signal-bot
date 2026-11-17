@@ -55,33 +55,12 @@ def start_listener(handlers):
                     cmd = text.split()[0].split("@")[0].lower()
                     h = handlers.get(cmd)
                     if h:
-                        # Agar command `/signal` hai, toh usay background thread mein run karein
-                        if cmd == "/signal":
-                            def delayed_signal():
-                                send("⏳ Signal command received. Waiting until the 40th second of the current candle...")
-                                
-                                # Current minute ke kitne seconds guzar chuke hain
-                                now_sec = time.time() % 60
-                                
-                                # Agar abhi 40 seconds nahi aaye, toh 40th second tak wait karein
-                                if now_sec < 40:
-                                    sleep_time = 40 - now_sec
-                                    time.sleep(sleep_time)
-                                elif now_sec > 40:
-                                    # Agar 40 seconds cross ho chuke hain, toh agli candle ke 40th second ka wait karein
-                                    sleep_time = (60 - now_sec) + 40
-                                    time.sleep(sleep_time)
-                                
-                                # Jaise hi 40th second aaye, handler (strategy calculation) call hoga
-                                res = h()
-                                if res:
-                                    send(res)
-
-                            threading.Thread(target=delayed_signal, daemon=True).start()
-                        else:
-                            res = h()
+                        def run_cmd(handler=h):
+                            res = handler()
                             if res:
                                 send(res)
+
+                        threading.Thread(target=run_cmd, daemon=True).start()
             except Exception as e:
                 print("telegram listener error:", e)
                 time.sleep(5)
